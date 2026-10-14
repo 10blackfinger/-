@@ -260,7 +260,7 @@ def phase_recon():
                 "Custom wordlist generated",
                 evidence={"words": words[:50]})
 
-    # 16. SSLyze (SSL/TLS deep analysis)
+    # 16. SSLyze
     log("Running sslyze...")
     stdout, _, _ = run_command(
         f"sslyze --regular {domain} 2>/dev/null | head -100",
@@ -284,7 +284,7 @@ def phase_recon():
             "DNS enumeration results",
             evidence={"output": stdout[:1000]})
 
-    # 18. Fierce (DNS)
+    # 18. Fierce
     log("Running fierce...")
     stdout, _, _ = run_command(
         f"fierce --domain {domain} 2>/dev/null | head -50",
@@ -308,10 +308,10 @@ def phase_recon():
             "Emails, hosts, and subdomains discovered",
             evidence={"output": stdout[:2000]})
 
-    # 20. SpiderFoot (passive OSINT)
+    # 20. SpiderFoot
     log("Running spiderfoot...")
     stdout, _, _ = run_command(
-        f"spiderfoot -s {domain} -q -o json 2>/dev/null | head -100",
+        f"python3 /opt/spiderfoot/sf.py -s {domain} -q -o json 2>/dev/null | head -100",
         timeout=180,
     )
     if stdout:
@@ -319,7 +319,6 @@ def phase_recon():
             "SpiderFoot OSINT",
             "Comprehensive OSINT scan results",
             evidence={"output": stdout[:2000]})
-
 
         # ============== PHASE 2: KNOWN VULNERABILITIES ==============
 
@@ -490,7 +489,7 @@ def phase_known_vulns():
             "Fuzzing results",
             evidence={"output": stdout[:1000]})
 
-    # 29. Dalfox (XSS)
+    # 29. Dalfox
     log("Running dalfox...")
     stdout, _, _ = run_command(
         f"dalfox url {TARGET_URL} --silence --no-color 2>/dev/null | head -30",
@@ -503,26 +502,7 @@ def phase_known_vulns():
             evidence={"output": stdout[:2000]},
             remediation="Sanitize user input and use output encoding")
 
-    # 30. JWT_tool
-    log("Running jwt_tool...")
-    # Requires a JWT token; skip if not available
-
-    # 31. Semgrep (if source code is available)
-    log("Semgrep scans source code, skipping for URL target", "info")
-
-    # 32. Trivy (container scanning)
-    log("Trivy scans containers, skipping for URL target", "info")
-
-    # 33. Gitleaks (secrets in git)
-    log("Gitleaks scans git repos, skipping for URL target", "info")
-
-    # 34. TruffleHog (secrets)
-    log("TruffleHog scans git repos, skipping for URL target", "info")
-
-    # 35. OSV-Scanner
-    log("OSV-Scanner scans dependencies, skipping for URL target", "info")
-
-    # 36. Retire.js
+    # 30. Retire.js
     log("Running retire.js...")
     stdout, _, _ = run_command(
         f"retire --js --url {TARGET_URL} --outputformat json 2>/dev/null",
@@ -531,15 +511,15 @@ def phase_known_vulns():
     if stdout:
         try:
             data = json.loads(stdout)
-            for finding in data if isinstance(data, list) else []:
+            for finding in (data if isinstance(data, list) else []):
                 save_result("known_vulns", "retirejs", "medium",
                     f"Vulnerable JS library: {finding.get('library', '')}",
-                    finding.get("vulnerabilities", [{}])[0].get("info", ""),
+                    str(finding.get("vulnerabilities", [{}])[0].get("info", ""))[:500],
                     evidence=finding)
         except json.JSONDecodeError:
             pass
 
-    # 37. WPScan (WordPress)
+    # 31. WPScan (WordPress)
     log("Running wpscan...")
     stdout, _, _ = run_command(
         f"wpscan --url {TARGET_URL} --no-update --format json 2>/dev/null | head -100",
@@ -551,9 +531,8 @@ def phase_known_vulns():
             "WordPress vulnerability scan",
             evidence={"output": stdout[:2000]})
 
-    # 38. Skipfish
+    # 32. Skipfish
     log("Running skipfish...")
-    # Skipfish is heavy; run for 60 seconds max
     stdout, _, _ = run_command(
         f"timeout 60 skipfish -o /tmp/skipfish_out {TARGET_URL} 2>/dev/null | head -30",
         timeout=120,
@@ -564,20 +543,7 @@ def phase_known_vulns():
             "Web security scan results",
             evidence={"output": stdout[:1000]})
 
-    # 39. Arachni
-    log("Running arachni...")
-    stdout, _, _ = run_command(
-        f"timeout 120 arachni --scope-url={TARGET_URL} --output-verbose "
-        f"--report-save-path=/tmp/arachni_report 2>/dev/null | head -30",
-        timeout=180,
-    )
-    if stdout:
-        save_result("known_vulns", "arachni", "info",
-            "Arachni scan",
-            "Web application security scan",
-            evidence={"output": stdout[:1000]})
-
-    # 40. Commix (command injection)
+    # 33. Commix
     log("Running commix...")
     stdout, _, _ = run_command(
         f"commix --url='{TARGET_URL}' --batch --level=1 2>/dev/null | head -30",
@@ -590,7 +556,7 @@ def phase_known_vulns():
             evidence={"output": stdout[:2000]},
             remediation="Sanitize all user input and avoid system calls")
 
-    # 41. XSStrike
+    # 34. XSStrike
     log("Running xsstrike...")
     stdout, _, _ = run_command(
         f"timeout 120 python3 /opt/XSStrike/xsstrike.py -u {TARGET_URL} --skip 2>/dev/null | head -30",
@@ -602,15 +568,12 @@ def phase_known_vulns():
             "XSStrike found XSS vulnerability",
             evidence={"output": stdout[:2000]})
 
-    # 42. Hydra (login brute-force - limited)
-    log("Hydra requires credentials, skipping", "info")
-
     # ============== PHASE 3: ZERO-DAY / ANOMALY ==============
 
 def phase_zero_day():
     log("Starting zero-day / anomaly phase")
 
-    # 43. Katana sensitive endpoints
+    # 35. Katana sensitive endpoints
     log("Analyzing sensitive endpoints...")
     stdout, _, _ = run_command(
         f"katana -u {TARGET_URL} -silent -d 3 2>/dev/null | head -500",
@@ -635,7 +598,7 @@ def phase_zero_day():
                         remediation="Review if this endpoint should be publicly accessible")
                     break
 
-    # 44. Security Headers Analysis
+    # 36. Security Headers Analysis
     log("Checking security headers...")
     stdout, _, _ = run_command(f"curl -sI {TARGET_URL} 2>/dev/null", timeout=30)
     if stdout:
@@ -648,10 +611,10 @@ def phase_zero_day():
             save_result("zero_day", "httpx", "medium",
                 f"Missing security headers ({len(missing)})",
                 f"Missing: {', '.join(missing)}",
-                evidence={"missing": missing},
+                evidence={"missing": missing, "raw_headers": stdout[:1500]},
                 remediation="Add these headers to server configuration")
 
-    # 45. Cookie Security Analysis
+    # 37. Cookie Security Analysis
     log("Analyzing cookie security...")
     stdout, _, _ = run_command(
         f"curl -sI {TARGET_URL} 2>/dev/null | grep -i 'set-cookie'",
@@ -671,10 +634,10 @@ def phase_zero_day():
             save_result("zero_day", "custom", "medium",
                 "Insecure cookie flags",
                 f"Issues: {', '.join(set(insecure_flags))}",
-                evidence={"cookies": cookies},
+                evidence={"cookies": cookies, "issues": list(set(insecure_flags))},
                 remediation="Set HttpOnly, Secure, and SameSite flags on cookies")
 
-    # 46. CORS Misconfiguration
+    # 38. CORS Misconfiguration
     log("Checking CORS...")
     stdout, _, _ = run_command(
         f"curl -sI -H 'Origin: https://evil.com' {TARGET_URL} 2>/dev/null | grep -i 'access-control'",
@@ -684,10 +647,10 @@ def phase_zero_day():
         save_result("zero_day", "custom", "high",
             "CORS misconfiguration",
             "Server reflects arbitrary Origin header",
-            evidence={"cors_header": stdout},
+            evidence={"cors_header": stdout.strip()},
             remediation="Validate Origin header against whitelist")
 
-    # 47. Open Redirect
+    # 39. Open Redirect
     log("Checking open redirect...")
     redirect_payloads = ["//evil.com", "https://evil.com", "/\\evil.com"]
     for payload in redirect_payloads:
@@ -698,12 +661,12 @@ def phase_zero_day():
         if stdout and "evil.com" in stdout:
             save_result("zero_day", "custom", "high",
                 "Open redirect vulnerability",
-                f"Parameter 'url' redirects to external domain",
-                evidence={"payload": payload, "response": stdout},
+                "Parameter 'url' redirects to external domain",
+                evidence={"payload": payload, "response": stdout.strip()},
                 remediation="Validate redirect URLs against whitelist")
             break
 
-    # 48. HTTP Methods Check
+    # 40. HTTP Methods Check
     log("Checking HTTP methods...")
     stdout, _, _ = run_command(
         f"curl -sX OPTIONS -i {TARGET_URL} 2>/dev/null | grep -i 'allow'",
@@ -716,7 +679,7 @@ def phase_zero_day():
             evidence={"methods": stdout.strip()},
             remediation="Disable unnecessary HTTP methods (PUT, DELETE, TRACE)")
 
-    # 49. Directory Traversal
+    # 41. Directory Traversal
     log("Checking directory traversal...")
     traversal_payloads = ["../../../../etc/passwd", "..%2f..%2f..%2fetc%2fpasswd"]
     for payload in traversal_payloads:
@@ -732,10 +695,10 @@ def phase_zero_day():
                 remediation="Validate file paths and restrict access to allowed directories")
             break
 
-    # 50. Information Disclosure
+    # 42. Information Disclosure
     log("Checking information disclosure...")
     sensitive_files = [".env", ".git/config", "wp-config.php.bak", "backup.sql",
-                       "phpinfo.php", "server-status", ".htaccess"]
+                       "phpinfo.php", "server-status", ".htaccess", ".DS_Store"]
     for f in sensitive_files:
         stdout, _, _ = run_command(
             f"curl -s -o /dev/null -w '%{{http_code}}' {TARGET_URL}/{f} 2>/dev/null",
@@ -745,10 +708,10 @@ def phase_zero_day():
             save_result("zero_day", "custom", "high",
                 f"Sensitive file exposed: /{f}",
                 f"File /{f} is publicly accessible",
-                evidence={"file": f, "status": 200},
+                evidence={"file": f, "status": 200, "url": f"{TARGET_URL}/{f}"},
                 remediation=f"Remove or restrict access to /{f}")
 
-    # 51. Server Banner Grabbing
+    # 43. Server Banner Grabbing
     log("Grabbing server banners...")
     stdout, _, _ = run_command(
         f"curl -sI {TARGET_URL} 2>/dev/null | grep -iE 'server|x-powered-by|x-aspnet'",
@@ -761,10 +724,11 @@ def phase_zero_day():
             evidence={"banners": stdout.strip()},
             remediation="Remove or obscure server version headers")
 
-    # 52. TLS/SSL Configuration Weakness
+    # 44. TLS/SSL Configuration Weakness
     log("Checking TLS configuration...")
+    domain = urlparse(TARGET_URL).netloc
     stdout, _, _ = run_command(
-        f"echo | openssl s_client -connect {urlparse(TARGET_URL).netloc}:443 "
+        f"echo | openssl s_client -connect {domain}:443 "
         f"-tls1_1 2>/dev/null | grep -i 'protocol\\|cipher' | head -5",
         timeout=30,
     )
@@ -774,6 +738,82 @@ def phase_zero_day():
             "Check for weak protocols/ciphers",
             evidence={"output": stdout[:500]},
             remediation="Disable TLS 1.0/1.1, use strong ciphers only")
+
+    # 45. Robots.txt Analysis
+    log("Checking robots.txt...")
+    stdout, _, _ = run_command(
+        f"curl -s {TARGET_URL}/robots.txt 2>/dev/null | head -30",
+        timeout=15,
+    )
+    if stdout and ("disallow" in stdout.lower() or "allow" in stdout.lower()):
+        save_result("zero_day", "custom", "info",
+            "robots.txt found",
+            "Discovered paths from robots.txt",
+            evidence={"content": stdout[:1000]},
+            remediation="Review if sensitive paths are listed in robots.txt")
+
+    # 46. Sitemap.xml Analysis
+    log("Checking sitemap.xml...")
+    stdout, _, _ = run_command(
+        f"curl -s {TARGET_URL}/sitemap.xml 2>/dev/null | head -30",
+        timeout=15,
+    )
+    if stdout and ("<urlset" in stdout.lower() or "<sitemapindex" in stdout.lower()):
+        save_result("zero_day", "custom", "info",
+            "Sitemap found",
+            "URLs discovered from sitemap.xml",
+            evidence={"content": stdout[:1000]})
+
+    # 47. HTTP/2 Support Check
+    log("Checking HTTP/2...")
+    stdout, _, _ = run_command(
+        f"curl -sI --http2 {TARGET_URL} 2>/dev/null | head -1",
+        timeout=15,
+    )
+    if stdout and "HTTP/2" in stdout:
+        save_result("zero_day", "custom", "info",
+            "HTTP/2 supported",
+            f"Server response: {stdout.strip()}",
+            evidence={"protocol": "HTTP/2"})
+
+    # 48. HTTP/3 (QUIC) Support Check
+    log("Checking HTTP/3...")
+    stdout, _, _ = run_command(
+        f"curl -sI --http3 {TARGET_URL} 2>/dev/null | head -1",
+        timeout=15,
+    )
+    if stdout and "HTTP/3" in stdout:
+        save_result("zero_day", "custom", "info",
+            "HTTP/3 supported",
+            f"Server response: {stdout.strip()}",
+            evidence={"protocol": "HTTP/3"})
+
+    # 49. Certificate Expiry Check
+    log("Checking certificate expiry...")
+    stdout, _, _ = run_command(
+        f"echo | openssl s_client -connect {domain}:443 -servername {domain} 2>/dev/null | "
+        f"openssl x509 -noout -dates -subject -issuer 2>/dev/null",
+        timeout=30,
+    )
+    if stdout:
+        save_result("zero_day", "custom", "info",
+            "SSL Certificate details",
+            "Certificate information",
+            evidence={"output": stdout[:500]})
+
+    # 50. Rate Limiting Check
+    log("Checking rate limiting...")
+    stdout, _, _ = run_command(
+        f"for i in $(seq 1 20); do curl -s -o /dev/null -w '%{{http_code}}\\n' {TARGET_URL} 2>/dev/null; done | sort | uniq -c",
+        timeout=60,
+    )
+    if stdout:
+        codes = stdout.strip()
+        save_result("zero_day", "custom", "info",
+            "Rate limiting analysis",
+            f"Response code distribution: {codes}",
+            evidence={"codes": codes},
+            remediation="Implement rate limiting to prevent abuse")
 
 
 # ============== MAIN ==============
@@ -812,6 +852,14 @@ def main():
 
         log(f"Scan completed. Total findings: {len(results_data)}", "success")
 
+        # Generate reports (TXT + HTML)
+        try:
+            from reporter import main as generate_reports
+            generate_reports()
+            log("Reports generated successfully", "success")
+        except Exception as e:
+            log(f"Report generation failed: {str(e)}", "warning")
+
     except Exception as e:
         log(f"Scan failed: {str(e)}", "error")
         supabase.table("scans").update({
@@ -822,4 +870,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()    
