@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>10blackfingers - AI Vulnerability Scanner</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">🛡️</div>
+            <h1>10blackfingers</h1>
+            <p class="tagline">AI-Powered Web Vulnerability Scanner</p>
+            <p class="subtitle">منصة فحص أمني متقدمة بـ 52 أداة</p>
+        </header>
+
+        <main>
+            <div id="scan-form-container">
+                <form id="scan-form">
+                    <div class="input-group">
+                        <input type="url" id="target-url" placeholder="https://example.com" required>
+                    </div>
+                    <div class="consent">
+                        <label>
+                            <input type="checkbox" id="consent-check" required>
+                            <span>أُقر بأنني أملك تصريحًا كتابيًا لفحص هذا الموقع</span>
+                        </label>
+                    </div>
+                    <button type="submit" id="scan-button">
+                        <span class="btn-icon">🔍</span>
+                        <span class="btn-text">ابدأ الفحص</span>
+                    </button>
+                </form>
+            </div>
+
+            <div id="progress-container" class="hidden">
+                <div class="progress-info">
+                    <div class="spinner"></div>
+                    <div>
+                        <p id="progress-status">جاري الفحص...</p>
+                        <p id="progress-detail" class="detail">قد يستغرق 5-15 دقيقة</p>
+                    </div>
+                </div>
+                <div class="progress-bar">
+                    <div id="progress-fill"></div>
+                </div>
+            </div>
+
+            <div id="results-container" class="hidden">
+                <div class="results-header">
+                    <h2>📊 نتائج الفحص</h2>
+                    <div class="results-meta" id="results-meta"></div>
+                </div>
+
+                <div class="stats-grid" id="stats-grid"></div>
+
+                <div class="actions">
+                    <button class="action-btn html" onclick="downloadReport('html')">
+                        🌐 عرض التقرير (HTML)
+                    </button>
+                    <button class="action-btn txt" onclick="downloadReport('txt')">
+                        📄 تحميل TXT
+                    </button>
+                    <button class="action-btn pdf" onclick="downloadReport('pdf')">
+                        📕 تحميل PDF
+                    </button>
+                    <button class="action-btn new" onclick="resetScan()">
+                        🔄 فحص جديد
+                    </button>
+                </div>
+
+                <div class="findings-list" id="findings-list"></div>
+            </div>
+
+            <div id="error-container" class="hidden">
+                <div class="error-box">
+                    <h3>⚠️ حدث خطأ</h3>
+                    <p id="error-message"></p>
+                    <button onclick="resetScan()">حاول مرة أخرى</button>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <p>52 Security Tools • Real Evidence • PDF/TXT/HTML Reports</p>
+            <p class="copyright">© 2026 10blackfingers - ISEF Project</p>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
