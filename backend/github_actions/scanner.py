@@ -788,7 +788,7 @@ def phase_known_vulns():
                 "Fuzzing results",
                 evidence={"output": "\n".join(lines[:50])})
 
-    # 29. Dalfox
+        # 29. Dalfox - إصلاح: التحقق من الأدلة الفعلية قبل التسجيل
     log("Running dalfox...")
     stdout, _, _ = run_command(
         f"dalfox url {TARGET_URL} --silence --no-color --format json 2>/dev/null",
@@ -800,32 +800,60 @@ def phase_known_vulns():
             data = json.loads(stdout)
             items = data if isinstance(data, list) else data.get("results", [])
             for finding in items:
+                # إصلاح: التحقق من وجود أدلة فعلية قبل التسجيل
+                payload = finding.get("payload", "").strip()
+                param = finding.get("param", "").strip()
+                poc_url = (finding.get("poc_url") or finding.get("data", "")).strip()
+                finding_type = finding.get("type", "").strip()
+                
+                # لو مفيش payload أو param أو نوع → مش finding حقيقي
+                if not payload or not param or not finding_type:
+                    log(f"Dalfox: تخطي finding بدون أدلة كافية (param={param}, payload_len={len(payload)})", "info")
+                    continue
+                
+                # لو الـ payload مش فيه HTML/JS → مش XSS
+                if "<" not in payload and "javascript:" not in payload.lower():
+                    log(f"Dalfox: تخطي finding - payload مش XSS: {payload[:50]}", "info")
+                    continue
+                
                 dalfox_parsed = True
                 save_result("known_vulns", "dalfox", "high",
-                    f"XSS vulnerability confirmed: {finding.get('type', 'Reflected XSS')}",
-                    f"Parameter: {finding.get('param', 'N/A')}",
+                    f"XSS vulnerability confirmed: {finding_type}",
+                    f"Parameter: {param}",
                     evidence={
-                        "payload_used": finding.get("payload", ""),
-                        "injection_point": finding.get("param", ""),
-                        "proof_of_concept_url": finding.get("poc_url") or finding.get("data", ""),
+                        "payload_used": payload,
+                        "injection_point": param,
+                        "proof_of_concept_url": poc_url,
                         "method": finding.get("method", "GET"),
                     },
-                    remediation="Sanitize user input and use proper output encoding")
+                    remediation="Sanitize user input and use proper output encoding (HTML entity encoding)")
         except json.JSONDecodeError:
             pass
 
-    if not dalfox_parsed:
-        stdout_txt, _, _ = run_command(
-            f"dalfox url {TARGET_URL} --silence --no-color 2>/dev/null | head -30",
-            timeout=300,
+    # fallback: لو الـ JSON parsing فشل، نجرب text parsing مع تحقق من الأدلة
+    if not dalfox_parsed and stdout:
+        # نتأكد إن النص فيه دليل حقيقي مش بس كلمة "vulnerable"
+        has_real_evidence = (
+            "[V]" in stdout or 
+            "payload" in stdout.lower() or
+            "verified" in stdout.lower()
         )
-        if stdout_txt and "vulnerable" in stdout_txt.lower():
-            save_result("known_vulns", "dalfox", "high",
-                "XSS vulnerability detected",
-                "Dalfox found XSS vulnerability",
-                evidence={"output": stdout_txt[:2000]},
-                remediation="Sanitize user input and use output encoding")
-
+        if has_real_evidence and "param" in stdout.lower():
+            # استخرج الـ param والـ payload من النص
+            param_match = re.search(r"param[:=]\s*(\S+)", stdout, re.IGNORECASE)
+            payload_match = re.search(r"payload[:=]\s*(\S+)", stdout, re.IGNORECASE)
+            
+            if param_match and payload_match:
+                save_result("known_vulns", "dalfox", "high",
+                    "XSS vulnerability detected",
+                    f"Parameter: {param_match.group(1)}",
+                    evidence={
+                        "payload_used": payload_match.group(1),
+                        "injection_point": param_match.group(1),
+                        "raw_output": stdout[:1500],
+                    },
+                    remediation="Sanitize user input and use output encoding")
+                
     # 30. Retire.js
     log("Running retire.js...")
     stdout, _, _ = run_command(
