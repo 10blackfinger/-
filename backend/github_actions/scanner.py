@@ -18,6 +18,24 @@ TARGET_URL = os.environ["TARGET_URL"]
 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 
+# ============== WORDLIST داخلي (إصلاح مشكلة FFuf / Wfuzz) ==============
+# wordlist أساسي مدمج في الكود نفسه، عشان نضمن وجوده دايمًا
+# على أي GitHub Actions runner من غير ما نعتمد على مسار خارجي زي
+# /usr/share/wordlists/dirb/common.txt اللي ممكن ميكونش موجود
+
+BASIC_WORDLIST = [
+    "admin", "login", "api", "test", "backup", "config", "wp-admin",
+    "wp-login.php", ".env", ".git", "uploads", "images", "assets",
+    "dashboard", "panel", "console", "debug", "phpinfo.php", "robots.txt",
+    "sitemap.xml", "swagger", "graphql", "v1", "v2", "docs", "dev",
+    "staging", "old", "temp", "tmp", ".well-known", "uploads/",
+    "includes", "install", "setup", "server-status", "db", "sql",
+    "backup.zip", "backup.sql", ".htaccess", "web.config",
+    "composer.json", "package.json", ".DS_Store", "README.md",
+    "CHANGELOG.md", "index.php.bak", "config.php.bak", "database.yml",
+]
+
+
 def log(message, level="info"):
     try:
         supabase.table("logs").insert({
@@ -62,6 +80,78 @@ def run_command(cmd, timeout=300):
         return "", "timeout", -1
     except Exception as e:
         return "", str(e), -1
+
+
+def write_wordlist_file():
+    """يكتب الـ wordlist الداخلي في ملف مؤقت ويرجع مساره"""
+    path = tempfile.mktemp(suffix="_wordlist.txt")
+    with open(path, "w") as f:
+        f.write("\n".join(BASIC_WORDLIST))
+    return path
+
+
+# ============== إصلاح 1: فحص إن الموقع شغال قبل أي حاجة ==============
+
+def check_target_alive():
+    """
+    يتأكد إن الموقع شغال فعلاً قبل ما نبدأ أي فحص.
+    يرجع (alive: bool, info: dict)
+    """
+    stdout, stderr, code = run_command(
+        f"curl -s -o /dev/null -w '%{{http_code}}' --max-time 15 -L {TARGET_URL} 2>/dev/null",
+        timeout=20,
+    )
+    status_raw = (stdout or "").strip()
+
+    if code != 0 or not status_raw or not status_raw.isdigit():
+        return False, {
+            "status_code": None,
+            "reason": "تعذر الاتصال بالموقع المستهدف (Timeout أو Connection Error أو الدومين غلط)",
+        }
+
+    status_code = int(status_raw)
+
+    if status_code >= 500:
+        return False, {
+            "status_code": status_code,
+            "reason": f"الموقع بيرجع خطأ سيرفر (HTTP {status_code}) - مش هينفع نفحصه بدقة",
+        }
+
+    if status_code == 0:
+        return False, {"status_code": None, "reason": "لا يوجد أي استجابة من الموقع"}
+
+    return True, {"status_code": status_code, "reason": "الموقع شغال"}
+
+
+# ============== جمع أدلة حقيقية من الموقع (للتقرير) ==============
+
+def gather_target_evidence():
+    """
+    يجمع أدلة حقيقية وموثقة من الموقع المستهدف لحظة الفحص:
+    Headers الفعلية، كود الاستجابة، زمن الاستجابة، وعنوان IP الحقيقي.
+    بتتسجل كـ finding مستقل عشان تظهر في التقرير كدليل يثبت
+    إن الفحص تم فعلاً على الموقع الحقيقي وإن النتايج ليست وهمية.
+    """
+    stdout, _, _ = run_command(
+        f"curl -s -D - -o /dev/null -w "
+        f"'\\nHTTP_STATUS:%{{http_code}}\\nTOTAL_TIME:%{{time_total}}s\\nREMOTE_IP:%{{remote_ip}}\\nREDIRECT_URL:%{{redirect_url}}' "
+        f"{TARGET_URL} 2>/dev/null",
+        timeout=20,
+    )
+    captured_at = datetime.utcnow().isoformat()
+    evidence = {
+        "raw_response_headers_and_timing": (stdout or "").strip(),
+        "target_url": TARGET_URL,
+        "captured_at": captured_at,
+    }
+    save_result(
+        "recon", "evidence_collector", "info",
+        "أدلة حقيقية موثقة من الموقع المستهدف وقت الفحص",
+        "تم استخراج Headers الفعلية، كود الاستجابة، زمن الاستجابة، وعنوان IP الحقيقي "
+        "من الموقع مباشرة وقت تنفيذ الفحص، كدليل يثبت أن النتائج حقيقية وليست افتراضية.",
+        evidence=evidence,
+    )
+    return evidence
 
 
 # ============== PHASE 1: RECONNAISSANCE ==============
@@ -164,6 +254,12 @@ def phase_recon():
             f"Crawled {len(urls)} URLs",
             "URLs discovered via crawling",
             evidence={"urls": urls[:100]})
+
+    # 7-ب. دعم مواقع SPA (React/Angular/Vue) عبر Puppeteer - إصلاح 6
+    try:
+        detect_spa_and_render()
+    except Exception as e:
+        log(f"SPA detection skipped: {e}", "warning")
 
     # 8. Gau
     log("Running gau...")
@@ -320,7 +416,67 @@ def phase_recon():
             "Comprehensive OSINT scan results",
             evidence={"output": stdout[:2000]})
 
-        # ============== PHASE 2: KNOWN VULNERABILITIES ==============
+
+def detect_spa_and_render():
+    """
+    إصلاح 6: دعم مواقع الـ SPA (React/Angular/Vue).
+    بيحاول يشغل سكريبت render_spa.js (Puppeteer) لو موجود جنب الملف ده
+    عشان يستخرج الروابط الحقيقية بعد ما الـ JavaScript يخلص تنفيذ.
+    لو Node.js أو السكريبت مش موجودين، بيتجاهل الخطوة من غير ما يوقف باقي الفحص.
+    """
+    script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "render_spa.js")
+    if not os.path.exists(script_path):
+        log("render_spa.js غير موجود - تخطي فحص SPA", "info")
+        return
+
+    output_path = tempfile.mktemp(suffix="_spa.json")
+    log("Running SPA renderer (Puppeteer)...")
+    run_command(f"node {script_path} '{TARGET_URL}' {output_path}", timeout=60)
+
+    try:
+        if os.path.exists(output_path):
+            with open(output_path, "r") as f:
+                data = json.load(f)
+            links = data.get("links", [])
+            if links:
+                save_result("recon", "puppeteer", "info",
+                    f"SPA rendering: تم استخراج {len(links)} رابط بعد التحميل الكامل",
+                    "الموقع يستخدم JavaScript framework (SPA) - تم استخراج الروابط بعد الـ render الكامل",
+                    evidence={"links": links[:100], "is_spa": True})
+    except Exception as e:
+        log(f"SPA render parse error: {e}", "warning")
+    finally:
+        if os.path.exists(output_path):
+            os.remove(output_path)
+
+
+# ============== PHASE 2: KNOWN VULNERABILITIES ==============
+
+SQLMAP_FINDING_PATTERN = re.compile(
+    r"Parameter:\s*(?P<param>.+?)\s*\n"
+    r"\s*Type:\s*(?P<type>.+?)\s*\n"
+    r"\s*Title:\s*(?P<title>.+?)\s*\n"
+    r"(?:\s*Payload:\s*(?P<payload>.+?)\s*\n)?",
+    re.MULTILINE,
+)
+
+
+def parse_sqlmap_findings(content):
+    """
+    إصلاح 4: يستخرج الثغرات الحقيقية بس من sqlmap عن طريق أنماط محددة
+    (Parameter / Type / Title / Payload) بدل البحث عن كلمة "vulnerable"
+    في كل المخرجات (اللي كانت بتلقط شعار الأداة نفسه كـ False Positive).
+    """
+    findings = []
+    for m in SQLMAP_FINDING_PATTERN.finditer(content):
+        findings.append({
+            "parameter": m.group("param").strip(),
+            "type": m.group("type").strip(),
+            "title": m.group("title").strip(),
+            "payload": (m.group("payload") or "").strip(),
+        })
+    return findings
+
 
 def phase_known_vulns():
     log("Starting known vulnerabilities phase")
@@ -357,6 +513,9 @@ def phase_known_vulns():
                     continue
     except FileNotFoundError:
         log("Nuclei output file not found", "warning")
+    finally:
+        if os.path.exists(output_file):
+            os.remove(output_file)
 
     # 22. Nikto
     log("Running nikto...")
@@ -380,8 +539,11 @@ def phase_known_vulns():
                     )
     except Exception as e:
         log(f"Nikto parse error: {e}", "warning")
+    finally:
+        if os.path.exists(nikto_out):
+            os.remove(nikto_out)
 
-    # 23. SQLMap
+    # 23. SQLMap - إصلاح 4: parsing دقيق بدل كلمة "vulnerable" العامة
     log("Running sqlmap...")
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
         sqlmap_out = f.name
@@ -394,16 +556,21 @@ def phase_known_vulns():
     try:
         with open(sqlmap_out, 'r') as f:
             content = f.read()
-            if "is vulnerable" in content.lower() or "injectable" in content.lower():
+        sql_findings = parse_sqlmap_findings(content)
+        if sql_findings:
+            for finding in sql_findings:
                 save_result(
                     "known_vulns", "sqlmap", "critical",
-                    "SQL Injection detected",
-                    "SQLMap found injectable parameter",
-                    evidence={"output": content[:2000]},
-                    remediation="Use prepared statements and parameterized queries",
+                    f"SQL Injection: {finding['title']}",
+                    f"Parameter: {finding['parameter']} | Type: {finding['type']}",
+                    evidence=finding,
+                    remediation="استخدم Prepared Statements و Parameterized Queries بدل الاستعلامات المباشرة",
                 )
     except Exception as e:
         log(f"SQLMap parse error: {e}", "warning")
+    finally:
+        if os.path.exists(sqlmap_out):
+            os.remove(sqlmap_out)
 
     # 24. Wapiti
     log("Running wapiti...")
@@ -427,14 +594,20 @@ def phase_known_vulns():
                     )
     except Exception as e:
         log(f"Wapiti parse error: {e}", "warning")
+    finally:
+        if os.path.exists(wapiti_out):
+            os.remove(wapiti_out)
 
     # 25. Gobuster
     log("Running gobuster...")
+    wordlist_path_gb = write_wordlist_file()
     stdout, _, _ = run_command(
-        f"gobuster dir -u {TARGET_URL} -w /usr/share/wordlists/dirb/common.txt "
+        f"gobuster dir -u {TARGET_URL} -w {wordlist_path_gb} "
         f"-t 20 -q 2>/dev/null | head -50",
         timeout=300,
     )
+    if os.path.exists(wordlist_path_gb):
+        os.remove(wordlist_path_gb)
     if stdout:
         paths = [p.strip() for p in stdout.strip().split("\n") if p.strip()]
         if paths:
@@ -443,18 +616,35 @@ def phase_known_vulns():
                 "Directory brute-force results",
                 evidence={"paths": paths[:50]})
 
-    # 26. FFuf
+    # 26. FFuf - إصلاح 2: wordlist داخلي + فلترة صحيحة + parsing JSON
     log("Running ffuf...")
-    stdout, _, _ = run_command(
-        f"ffuf -u {TARGET_URL}/FUZZ -w /usr/share/wordlists/dirb/common.txt "
-        f"-mc 200,301,302,403 -t 20 -s 2>/dev/null | head -30",
-        timeout=300,
+    wordlist_path = write_wordlist_file()
+    ffuf_json = tempfile.mktemp(suffix="_ffuf.json")
+    run_command(
+        f"ffuf -u {TARGET_URL}/FUZZ -w {wordlist_path} "
+        f"-mc 200,201,202,204,301,302,307,401,403 -fc 404 "
+        f"-t 20 -timeout 10 -o {ffuf_json} -of json -s 2>/dev/null",
+        timeout=180,
     )
-    if stdout:
-        save_result("known_vulns", "ffuf", "info",
-            "FFuf fuzzing completed",
-            "Directory/parameter fuzzing results",
-            evidence={"output": stdout[:1000]})
+    try:
+        if os.path.exists(ffuf_json):
+            with open(ffuf_json, 'r') as f:
+                data = json.load(f)
+            findings = data.get("results", [])
+            if findings:
+                save_result("known_vulns", "ffuf", "info",
+                    f"FFuf found {len(findings)} paths/endpoints",
+                    "Directory/parameter fuzzing results (أدلة حقيقية من استجابات الموقع)",
+                    evidence={"results": [
+                        {"url": r.get("url"), "status": r.get("status"), "length": r.get("length")}
+                        for r in findings[:50]
+                    ]})
+    except Exception as e:
+        log(f"FFuf parse error: {e}", "warning")
+    finally:
+        for p in [wordlist_path, ffuf_json]:
+            if os.path.exists(p):
+                os.remove(p)
 
     # 27. Dirsearch
     log("Running dirsearch...")
@@ -475,19 +665,31 @@ def phase_known_vulns():
                     evidence=r)
     except Exception as e:
         log(f"Dirsearch parse error: {e}", "warning")
+    finally:
+        if os.path.exists(dirsearch_out):
+            os.remove(dirsearch_out)
 
-    # 28. Wfuzz
+    # 28. Wfuzz - إصلاح 3: wordlist داخلي + تخطي سطور الـ banner
     log("Running wfuzz...")
+    wordlist_path2 = write_wordlist_file()
     stdout, _, _ = run_command(
-        f"wfuzz -c -z file,/usr/share/wordlists/dirb/common.txt "
-        f"--hc 404 -t 20 {TARGET_URL}/FUZZ 2>/dev/null | head -30",
-        timeout=300,
+        f"wfuzz -c -z file,{wordlist_path2} --hc 404 -t 20 "
+        f"{TARGET_URL}/FUZZ 2>/dev/null",
+        timeout=180,
     )
+    if os.path.exists(wordlist_path2):
+        os.remove(wordlist_path2)
     if stdout:
-        save_result("known_vulns", "wfuzz", "info",
-            "Wfuzz completed",
-            "Fuzzing results",
-            evidence={"output": stdout[:1000]})
+        # نشيل سطور الـ banner التعريفية بتاعة wfuzz ونسيب النتايج الفعلية بس
+        lines = [
+            l.strip() for l in stdout.strip().split("\n")
+            if l.strip() and re.match(r"^\d+", l.strip())
+        ]
+        if lines:
+            save_result("known_vulns", "wfuzz", "info",
+                f"Wfuzz found {len(lines)} results",
+                "Fuzzing results (تم استبعاد 404 وسطور الـ banner)",
+                evidence={"output": "\n".join(lines[:50])})
 
     # 29. Dalfox
     log("Running dalfox...")
@@ -568,10 +770,12 @@ def phase_known_vulns():
             "XSStrike found XSS vulnerability",
             evidence={"output": stdout[:2000]})
 
-    # ============== PHASE 3: ZERO-DAY / ANOMALY ==============
+
+# ============== PHASE 3: ZERO-DAY / ANOMALY ==============
 
 def phase_zero_day():
     log("Starting zero-day / anomaly phase")
+    domain = urlparse(TARGET_URL).netloc
 
     # 35. Katana sensitive endpoints
     log("Analyzing sensitive endpoints...")
@@ -724,20 +928,39 @@ def phase_zero_day():
             evidence={"banners": stdout.strip()},
             remediation="Remove or obscure server version headers")
 
-    # 44. TLS/SSL Configuration Weakness
+    # 44. TLS/SSL Configuration Weakness - إصلاح 5: قلب المنطق
     log("Checking TLS configuration...")
-    domain = urlparse(TARGET_URL).netloc
-    stdout, _, _ = run_command(
-        f"echo | openssl s_client -connect {domain}:443 "
-        f"-tls1_1 2>/dev/null | grep -i 'protocol\\|cipher' | head -5",
-        timeout=30,
-    )
-    if stdout:
-        save_result("zero_day", "custom", "medium",
-            "TLS configuration issues",
-            "Check for weak protocols/ciphers",
-            evidence={"output": stdout[:500]},
-            remediation="Disable TLS 1.0/1.1, use strong ciphers only")
+    weak_protocol_flags = {"TLS 1.0": "-tls1", "TLS 1.1": "-tls1_1"}
+    weak_tls_found = []
+    for proto_name, flag in weak_protocol_flags.items():
+        stdout, _, _ = run_command(
+            f"echo | openssl s_client -connect {domain}:443 {flag} 2>&1 | "
+            f"grep -E 'Cipher|Protocol|handshake failure'",
+            timeout=20,
+        )
+        output = stdout or ""
+        # لو السيرفر رفض الاتصال، أو الـ Cipher كانت (NONE)/0000،
+        # معناه البروتوكول القديم ده *مش* مدعوم = ده دليل أمان مش ثغرة
+        handshake_failed = (
+            "handshake failure" in output.lower()
+            or "cipher is (none)" in output.lower()
+            or "0000" in output
+            or not output.strip()
+        )
+        if not handshake_failed:
+            weak_tls_found.append({"protocol": proto_name, "details": output.strip()})
+
+    if weak_tls_found:
+        save_result("zero_day", "custom", "high",
+            f"الموقع بيدعم بروتوكولات TLS قديمة وضعيفة ({len(weak_tls_found)})",
+            "دعم بروتوكولات TLS قديمة يعرّض الاتصال لهجمات Downgrade",
+            evidence={"weak_protocols": weak_tls_found},
+            remediation="عطّل TLS 1.0 و TLS 1.1 من إعدادات السيرفر، استخدم TLS 1.2/1.3 بس")
+    else:
+        save_result("zero_day", "custom", "info",
+            "TLS configuration: لا يوجد دعم لبروتوكولات قديمة",
+            "السيرفر رفض الاتصال ببروتوكولات TLS 1.0/1.1 القديمة - ده إعداد آمن",
+            evidence={"checked_protocols": list(weak_protocol_flags.keys())})
 
     # 45. Robots.txt Analysis
     log("Checking robots.txt...")
@@ -827,6 +1050,23 @@ def main():
             "started_at": datetime.utcnow().isoformat(),
         }).eq("id", SCAN_ID).execute()
 
+        # إصلاح 1: لازم نتأكد إن الموقع شغال قبل أي فحص
+        alive, alive_info = check_target_alive()
+        if not alive:
+            error_msg = f"❌ تم إيقاف الفحص: {alive_info['reason']}"
+            log(error_msg, "critical")
+            supabase.table("scans").update({
+                "status": "failed",
+                "error_message": error_msg,
+                "completed_at": datetime.utcnow().isoformat(),
+            }).eq("id", SCAN_ID).execute()
+            return
+
+        log(f"✅ الموقع شغال (HTTP {alive_info['status_code']}) - بدء الفحص", "success")
+
+        # جمع أدلة حقيقية من الموقع لحظة بدء الفحص (للتقرير)
+        gather_target_evidence()
+
         phase_recon()
         phase_known_vulns()
         phase_zero_day()
@@ -870,4 +1110,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()    
+    main()

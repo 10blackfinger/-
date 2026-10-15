@@ -1,5 +1,6 @@
 import os
 import json
+import html
 from datetime import datetime
 from supabase import create_client
 
@@ -28,6 +29,13 @@ SEVERITY_LABELS = {
     "low": "LOW",
     "info": "INFO",
 }
+
+
+def _esc(value) -> str:
+    """إصلاح: HTML escaping - أي نص راجع من أداة فحص ممكن يكون جزء
+    من استجابة الموقع المستهدف نفسه، فلازم يتعامل معاه كـ نص عادي
+    مش HTML عشان منسمحش بـ XSS جوه التقرير نفسه."""
+    return html.escape(str(value), quote=True)
 
 
 def fetch_data():
@@ -137,29 +145,33 @@ def generate_html(scan, results, logs):
                 ev = r["evidence"]
                 if isinstance(ev, dict):
                     for k, v in ev.items():
-                        evidence_str += f"<li><strong>{k}:</strong> <code>{str(v)[:1000]}</code></li>"
+                        evidence_str += f"<li><strong>{_esc(k)}:</strong> <code>{_esc(str(v)[:1000])}</code></li>"
+
+            cvss_span = f'<span><strong>CVSS:</strong> {_esc(r["cvss_score"])}</span>' if r.get('cvss_score') else ''
+            cve_span = f'<span><strong>CVE:</strong> {_esc(r["cve_id"])}</span>' if r.get('cve_id') else ''
+            desc_p = f'<p class="desc">{_esc(r["description"])}</p>' if r.get('description') else ''
+            ev_div = f'<div class="evidence"><h4>Evidence</h4><ul>{evidence_str}</ul></div>' if evidence_str else ''
+            rem_div = f'<div class="remediation"><h4>Remediation</h4><pre>{_esc(r["remediation"])}</pre></div>' if r.get('remediation') else ''
 
             findings_html += f"""
             <div class="finding severity-{severity}">
-                <h3>[{i}] {r.get('title', 'Untitled')}</h3>
+                <h3>[{i}] {_esc(r.get('title', 'Untitled'))}</h3>
                 <div class="meta">
-                    <span><strong>Tool:</strong> {r.get('tool_name', 'N/A')}</span>
-                    <span><strong>Phase:</strong> {r.get('phase', 'N/A')}</span>
-                    <span><strong>Severity:</strong> {r.get('severity', 'N/A')}</span>
-                    {f'<span><strong>CVSS:</strong> {r["cvss_score"]}</span>' if r.get('cvss_score') else ''}
-                    {f'<span><strong>CVE:</strong> {r["cve_id"]}</span>' if r.get('cve_id') else ''}
+                    <span><strong>Tool:</strong> {_esc(r.get('tool_name', 'N/A'))}</span>
+                    <span><strong>Phase:</strong> {_esc(r.get('phase', 'N/A'))}</span>
+                    <span><strong>Severity:</strong> {_esc(r.get('severity', 'N/A'))}</span>
+                    {cvss_span}{cve_span}
                 </div>
-                {f'<p class="desc">{r["description"]}</p>' if r.get('description') else ''}
-                {f'<div class="evidence"><h4>Evidence</h4><ul>{evidence_str}</ul></div>' if evidence_str else ''}
-                {f'<div class="remediation"><h4>Remediation</h4><pre>{r["remediation"]}</pre></div>' if r.get('remediation') else ''}
+                {desc_p}{ev_div}{rem_div}
             </div>
             """
 
-    html = f"""<!DOCTYPE html>
+    target_safe = _esc(scan.get('target_url', TARGET_URL))
+    html_out = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Security Report - {scan.get('target_url', TARGET_URL)}</title>
+<title>Security Report - {target_safe}</title>
 <style>
     body {{ font-family: -apple-system, Segoe UI, sans-serif; max-width: 1000px; margin: 40px auto; padding: 20px; background: #f5f5f5; color: #222; }}
     h1 {{ color: #111; border-bottom: 3px solid #00ff41; padding-bottom: 10px; }}
@@ -202,10 +214,10 @@ def generate_html(scan, results, logs):
 <body>
     <h1>🛡️ 10blackfingers Security Report</h1>
     <div class="summary">
-        <p><strong>Target:</strong> {scan.get('target_url', TARGET_URL)}</p>
-        <p><strong>Scan ID:</strong> {SCAN_ID}</p>
-        <p><strong>Started:</strong> {scan.get('started_at', 'N/A')}</p>
-        <p><strong>Completed:</strong> {scan.get('completed_at', 'N/A')}</p>
+        <p><strong>Target:</strong> {target_safe}</p>
+        <p><strong>Scan ID:</strong> {_esc(SCAN_ID)}</p>
+        <p><strong>Started:</strong> {_esc(scan.get('started_at', 'N/A'))}</p>
+        <p><strong>Completed:</strong> {_esc(scan.get('completed_at', 'N/A'))}</p>
         <div class="stats">
             <div class="stat total">Total: {scan.get('total_findings', 0)}</div>
             <div class="stat critical">Critical: {scan.get('critical_count', 0)}</div>
@@ -221,7 +233,7 @@ def generate_html(scan, results, logs):
     </p>
 </body>
 </html>"""
-    return html
+    return html_out
 
 
 def save_reports(scan, results, logs):

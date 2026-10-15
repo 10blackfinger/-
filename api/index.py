@@ -1,22 +1,39 @@
 import os
 import io
+import re
+import html
+import socket
+import ipaddress
 from datetime import datetime
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse, HTMLResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
-app = FastAPI(title="10blackfingers API", version="1.0.0")
+app = FastAPI(title="10blackfingers API", version="1.1.0")
+
+# ============================================================
+# إصلاح 2: CORS - allow_origins="*" مع allow_credentials=True
+# كان تضارب غير آمن (والمتصفحات أصلًا بترفضه). إحنا مش محتاجين
+# credentials (مفيش cookies/auth هنا)، فخليناه False، وحددنا
+# الدومينات الحقيقية المسموح لها تنادي الـ API.
+# ============================================================
+ALLOWED_ORIGINS = [
+    "https://10blackfingers.vercel.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
 
 
@@ -61,10 +78,84 @@ async def sb_update(table: str, match: dict, data: dict):
         return r.json()
 
 
+# ============================================================
+# إصلاح 3: حماية من SSRF - التأكد إن الرابط المطلوب فحصه
+# رابط عام حقيقي، مش عنوان داخلي أو Cloud metadata أو localhost.
+# من غير كده، أي حد يقدر يخلي منصتك تفحص بنيتها التحتية هي نفسها.
+# ============================================================
+
+BLOCKED_HOSTNAMES = {"localhost", "metadata.google.internal"}
+
+
+def is_private_or_reserved_ip(ip_str: str) -> bool:
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return True  # لو مش قادرين نفهمه، منرفضوش الفايدة
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def validate_target_url(raw_url: str) -> str:
+    raw_url = (raw_url or "").strip()
+    if not raw_url:
+        raise HTTPException(status_code=400, detail="الرابط مطلوب")
+
+    parsed = urlparse(raw_url)
+
+    if parsed.scheme not in ("http", "https"):
+        raise HTTPException(status_code=400, detail="الرابط لازم يبدأ بـ http:// أو https://")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise HTTPException(status_code=400, detail="رابط غير صالح")
+
+    hostname_lower = hostname.lower()
+    if hostname_lower in BLOCKED_HOSTNAMES or hostname_lower.endswith(".local"):
+        raise HTTPException(status_code=400, detail="غير مسموح بفحص عناوين داخلية")
+
+    # لو الهوست نفسه IP، نتأكد إنه مش private/loopback/metadata
+    try:
+        ipaddress.ip_address(hostname)
+        if is_private_or_reserved_ip(hostname):
+            raise HTTPException(status_code=400, detail="غير مسموح بفحص عناوين IP داخلية أو محجوزة")
+    except ValueError:
+        pass  # مش IP، يبقى دومين عادي - هنتأكد من الـ DNS resolution تحت
+
+    # نتأكد إن الدومين مش بيعمل resolve لـ IP داخلي (DNS rebinding / SSRF)
+    try:
+        resolved_ips = socket.getaddrinfo(hostname, None)
+        for family, _, _, _, sockaddr in resolved_ips:
+            ip_candidate = sockaddr[0]
+            if is_private_or_reserved_ip(ip_candidate):
+                raise HTTPException(
+                    status_code=400,
+                    detail="الدومين بيشاور على عنوان IP داخلي - غير مسموح بالفحص",
+                )
+    except socket.gaierror:
+        raise HTTPException(status_code=400, detail="تعذر إيجاد الدومين (DNS resolution فشل)")
+
+    return raw_url
+
+
 class ScanRequest(BaseModel):
     url: str
     consent: bool
     session_id: str
+
+    @field_validator("session_id")
+    @classmethod
+    def validate_session_id(cls, v):
+        v = (v or "").strip()
+        if not v or len(v) > 100 or not re.match(r"^[A-Za-z0-9_\-]+$", v):
+            raise ValueError("session_id غير صالح")
+        return v
 
 
 class ScanResponse(BaseModel):
@@ -75,12 +166,12 @@ class ScanResponse(BaseModel):
 
 @app.get("/")
 def root():
-    return {"name": "10blackfingers API", "version": "1.0.0", "status": "running"}
+    return {"name": "10blackfingers API", "version": "1.1.0", "status": "running"}
 
 
 @app.get("/api")
 def api_root():
-    return {"name": "10blackfingers API", "version": "1.0.0", "status": "running"}
+    return {"name": "10blackfingers API", "version": "1.1.0", "status": "running"}
 
 
 @app.get("/health")
@@ -93,10 +184,11 @@ async def create_scan(request: ScanRequest):
     import uuid
 
     if not request.consent:
-        raise HTTPException(status_code=400, detail="Consent is required")
+        raise HTTPException(status_code=400, detail="الموافقة على التصريح مطلوبة قبل الفحص")
+
+    target_url = validate_target_url(request.url)
 
     scan_id = str(uuid.uuid4())
-    target_url = request.url
 
     try:
         await sb_insert("scans", {
@@ -120,11 +212,34 @@ async def create_scan(request: ScanRequest):
             }
             payload = {"ref": "main", "inputs": {"scan_id": scan_id, "target_url": target_url}}
             async with httpx.AsyncClient(timeout=30.0) as client:
-                await client.post(url, headers=headers, json=payload)
+                dispatch_res = await client.post(url, headers=headers, json=payload)
+                if dispatch_res.status_code >= 300:
+                    log_detail = f"GitHub dispatch failed: {dispatch_res.status_code} - {dispatch_res.text[:300]}"
+                    try:
+                        await sb_update("scans", {"id": scan_id}, {
+                            "status": "failed",
+                            "error_message": log_detail,
+                        })
+                    except Exception:
+                        pass
+        except Exception as e:
+            try:
+                await sb_update("scans", {"id": scan_id}, {
+                    "status": "failed",
+                    "error_message": f"تعذر بدء الفحص: {str(e)}",
+                })
+            except Exception:
+                pass
+    else:
+        try:
+            await sb_update("scans", {"id": scan_id}, {
+                "status": "failed",
+                "error_message": "GITHUB_TOKEN غير مُعرّف في إعدادات السيرفر",
+            })
         except Exception:
             pass
 
-    return ScanResponse(scan_id=scan_id, status="pending", message="Scan has been queued successfully")
+    return ScanResponse(scan_id=scan_id, status="pending", message="تم إضافة الفحص للطابور بنجاح")
 
 
 @app.get("/api/scan/{scan_id}")
@@ -132,7 +247,7 @@ async def get_scan_status(scan_id: str):
     try:
         scans = await sb_select("scans", {"id": f"eq.{scan_id}", "select": "*"})
         if not scans:
-            raise HTTPException(status_code=404, detail="Scan not found")
+            raise HTTPException(status_code=404, detail="الفحص غير موجود")
         scan = scans[0]
         results = await sb_select("results", {"scan_id": f"eq.{scan_id}", "select": "*"})
         return {"scan": scan, "results": results or []}
@@ -144,6 +259,8 @@ async def get_scan_status(scan_id: str):
 
 @app.get("/api/scans")
 async def list_scans(session_id: str, limit: int = 10):
+    # إصلاح 4: حد أقصى حقيقي على limit عشان محدش يطلب آلاف السجلات
+    limit = max(1, min(limit, 50))
     try:
         scans = await sb_select("scans", {
             "session_id": f"eq.{session_id}",
@@ -163,7 +280,7 @@ async def list_scans(session_id: str, limit: int = 10):
 async def fetch_report_data(scan_id: str):
     scans = await sb_select("scans", {"id": f"eq.{scan_id}", "select": "*"})
     if not scans:
-        raise HTTPException(status_code=404, detail="Scan not found")
+        raise HTTPException(status_code=404, detail="الفحص غير موجود")
     scan = scans[0]
     results = await sb_select("results", {"scan_id": f"eq.{scan_id}", "select": "*"})
     return scan, results or []
@@ -241,6 +358,13 @@ def build_txt_report(scan, results):
     return "\n".join(lines)
 
 
+def _esc(value) -> str:
+    """إصلاح 1: HTML escaping - أي نص جاي من أداة فحص (ممكن يكون
+    جزء من استجابة الموقع المستهدف نفسه) لازم يتعامل معاه كـ نص عادي
+    مش HTML، عشان منسمحش بـ XSS جوه التقرير نفسه."""
+    return html.escape(str(value), quote=True)
+
+
 def build_html_report(scan, results):
     by_severity = {"critical": [], "high": [], "medium": [], "low": [], "info": []}
     for r in results:
@@ -252,33 +376,34 @@ def build_html_report(scan, results):
         items = by_severity.get(severity, [])
         if not items:
             continue
-        findings_html += f'<h2 class="severity-{severity}">{severity.upper()} ({len(items)})</h2>'
+        findings_html += f'<h2 class="severity-{severity}">{_esc(severity.upper())} ({len(items)})</h2>'
         for i, r in enumerate(items, 1):
             evidence_str = ""
             if r.get("evidence") and isinstance(r["evidence"], dict):
                 for k, v in r["evidence"].items():
-                    evidence_str += f"<li><strong>{k}:</strong> <code>{str(v)[:1000]}</code></li>"
-            cvss_html = f'<span><strong>CVSS:</strong> {r["cvss_score"]}</span>' if r.get('cvss_score') else ''
-            cve_html = f'<span><strong>CVE:</strong> {r["cve_id"]}</span>' if r.get('cve_id') else ''
-            desc_html = f'<p class="desc">{r["description"]}</p>' if r.get('description') else ''
+                    evidence_str += f"<li><strong>{_esc(k)}:</strong> <code>{_esc(str(v)[:1000])}</code></li>"
+            cvss_html = f'<span><strong>CVSS:</strong> {_esc(r["cvss_score"])}</span>' if r.get('cvss_score') else ''
+            cve_html = f'<span><strong>CVE:</strong> {_esc(r["cve_id"])}</span>' if r.get('cve_id') else ''
+            desc_html = f'<p class="desc">{_esc(r["description"])}</p>' if r.get('description') else ''
             ev_html = f'<div class="evidence"><h4>Evidence</h4><ul>{evidence_str}</ul></div>' if evidence_str else ''
-            rem_html = f'<div class="remediation"><h4>Remediation</h4><pre>{r["remediation"]}</pre></div>' if r.get('remediation') else ''
+            rem_html = f'<div class="remediation"><h4>Remediation</h4><pre>{_esc(r["remediation"])}</pre></div>' if r.get('remediation') else ''
             findings_html += f"""
             <div class="finding severity-{severity}">
-                <h3>[{i}] {r.get('title', 'Untitled')}</h3>
+                <h3>[{i}] {_esc(r.get('title', 'Untitled'))}</h3>
                 <div class="meta">
-                    <span><strong>Tool:</strong> {r.get('tool_name', 'N/A')}</span>
-                    <span><strong>Phase:</strong> {r.get('phase', 'N/A')}</span>
-                    <span><strong>Severity:</strong> {r.get('severity', 'N/A')}</span>
+                    <span><strong>Tool:</strong> {_esc(r.get('tool_name', 'N/A'))}</span>
+                    <span><strong>Phase:</strong> {_esc(r.get('phase', 'N/A'))}</span>
+                    <span><strong>Severity:</strong> {_esc(r.get('severity', 'N/A'))}</span>
                     {cvss_html}{cve_html}
                 </div>
                 {desc_html}{ev_html}{rem_html}
             </div>
             """
 
-    html = f"""<!DOCTYPE html>
+    target_safe = _esc(scan.get('target_url', 'N/A'))
+    html_out = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="UTF-8">
-<title>Security Report - {scan.get('target_url', 'N/A')}</title>
+<title>Security Report - {target_safe}</title>
 <style>
 body {{ font-family: -apple-system, Segoe UI, sans-serif; max-width: 1000px; margin: 40px auto; padding: 20px; background: #f5f5f5; color: #222; }}
 h1 {{ color: #111; border-bottom: 3px solid #00ff41; padding-bottom: 10px; }}
@@ -316,10 +441,10 @@ h2.severity-info {{ background: #e0e7ff; color: #3730a3; }}
 <button class="print-btn" onclick="window.print()">Print / Save as PDF</button>
 <h1>10blackfingers Security Report</h1>
 <div class="summary">
-<p><strong>Target:</strong> {scan.get('target_url', 'N/A')}</p>
-<p><strong>Scan ID:</strong> {scan.get('id', 'N/A')}</p>
-<p><strong>Started:</strong> {scan.get('started_at', 'N/A')}</p>
-<p><strong>Completed:</strong> {scan.get('completed_at', 'N/A')}</p>
+<p><strong>Target:</strong> {target_safe}</p>
+<p><strong>Scan ID:</strong> {_esc(scan.get('id', 'N/A'))}</p>
+<p><strong>Started:</strong> {_esc(scan.get('started_at', 'N/A'))}</p>
+<p><strong>Completed:</strong> {_esc(scan.get('completed_at', 'N/A'))}</p>
 <div class="stats">
 <div class="stat total">Total: {scan.get('total_findings', 0)}</div>
 <div class="stat critical">Critical: {scan.get('critical_count', 0)}</div>
@@ -331,7 +456,7 @@ h2.severity-info {{ background: #e0e7ff; color: #3730a3; }}
 <hr><p style="text-align: center; color: #888; font-size: 0.9em;">
 Generated by 10blackfingers at {datetime.utcnow().isoformat()} UTC</p>
 </body></html>"""
-    return html
+    return html_out
 
 
 @app.get("/api/scan/{scan_id}/report/txt")
@@ -368,7 +493,13 @@ async def download_report_pdf(scan_id: str):
     body_style = ParagraphStyle('B', parent=styles['Normal'], fontSize=9, leading=13)
 
     story = [Paragraph("10blackfingers Security Report", title_style), Spacer(1, 10)]
-    info = f"<b>Target:</b> {scan.get('target_url', 'N/A')}<br/><b>Scan ID:</b> {scan.get('id', 'N/A')}<br/><b>Total:</b> {scan.get('total_findings', 0)} | <b>Critical:</b> {scan.get('critical_count', 0)} | <b>High:</b> {scan.get('high_count', 0)} | <b>Medium:</b> {scan.get('medium_count', 0)} | <b>Low:</b> {scan.get('low_count', 0)}"
+    info = (
+        f"<b>Target:</b> {_esc(scan.get('target_url', 'N/A'))}<br/>"
+        f"<b>Scan ID:</b> {_esc(scan.get('id', 'N/A'))}<br/>"
+        f"<b>Total:</b> {scan.get('total_findings', 0)} | <b>Critical:</b> {scan.get('critical_count', 0)} | "
+        f"<b>High:</b> {scan.get('high_count', 0)} | <b>Medium:</b> {scan.get('medium_count', 0)} | "
+        f"<b>Low:</b> {scan.get('low_count', 0)}"
+    )
     story.append(Paragraph(info, body_style))
     story.append(Spacer(1, 15))
 
@@ -382,24 +513,23 @@ async def download_report_pdf(scan_id: str):
             continue
         story.append(Paragraph(f"{severity.upper()} ({len(items)})", h2_style))
         for i, r in enumerate(items, 1):
-            story.append(Paragraph(f"[{i}] {r.get('title', 'Untitled')}", h3_style))
-            meta = f"<b>Tool:</b> {r.get('tool_name', 'N/A')} | <b>Phase:</b> {r.get('phase', 'N/A')}"
+            story.append(Paragraph(f"[{i}] {_esc(r.get('title', 'Untitled'))}", h3_style))
+            meta = f"<b>Tool:</b> {_esc(r.get('tool_name', 'N/A'))} | <b>Phase:</b> {_esc(r.get('phase', 'N/A'))}"
             if r.get('cvss_score'):
-                meta += f" | <b>CVSS:</b> {r['cvss_score']}"
+                meta += f" | <b>CVSS:</b> {_esc(r['cvss_score'])}"
             if r.get('cve_id'):
-                meta += f" | <b>CVE:</b> {r['cve_id']}"
+                meta += f" | <b>CVE:</b> {_esc(r['cve_id'])}"
             story.append(Paragraph(meta, body_style))
             if r.get('description'):
-                desc = str(r['description']).replace('<', '&lt;').replace('>', '&gt;')[:1000]
+                desc = _esc(str(r['description'])[:1000])
                 story.append(Paragraph(f"<b>Description:</b> {desc}", body_style))
             if r.get('evidence') and isinstance(r['evidence'], dict):
                 ev = "Evidence: "
                 for k, v in list(r['evidence'].items())[:5]:
-                    ev += f"{k}={str(v)[:200]}; "
-                ev = ev.replace('<', '&lt;').replace('>', '&gt;')
+                    ev += f"{_esc(k)}={_esc(str(v)[:200])}; "
                 story.append(Paragraph(ev, body_style))
             if r.get('remediation'):
-                rem = str(r['remediation']).replace('<', '&lt;').replace('>', '&gt;')[:1000]
+                rem = _esc(str(r['remediation'])[:1000])
                 story.append(Paragraph(f"<b>Remediation:</b> {rem}", body_style))
             story.append(Spacer(1, 8))
         story.append(PageBreak())

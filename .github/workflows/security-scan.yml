@@ -27,6 +27,19 @@ jobs:
         with:
           python-version: '3.11'
 
+      # إضافة: Node.js + Puppeteer لدعم مواقع SPA (React/Angular/Vue) - إصلاح 6
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Puppeteer
+        run: |
+          npm install puppeteer --prefix "$HOME/puppeteer-env" --silent 2>/dev/null || true
+          mkdir -p backend/github_actions/node_modules
+          cp -r "$HOME/puppeteer-env/node_modules" backend/github_actions/ 2>/dev/null || true
+        continue-on-error: true
+
       - name: Install system tools
         run: |
           sudo apt-get update -qq
@@ -107,13 +120,18 @@ jobs:
       - name: Verify tools
         run: |
           echo "=== Tool Verification ==="
-          for tool in nmap whatweb nikto subfinder nuclei httpx katana naabu dnsx tlsx gobuster ffuf dirsearch wfuzz sqlmap wapiti dalfox gau waybackurls wafw00f theHarvester sslyze; do
+          for tool in nmap whatweb nikto subfinder nuclei httpx katana naabu dnsx tlsx gobuster ffuf dirsearch wfuzz sqlmap wapiti dalfox gau waybackurls wafw00f theHarvester sslyze node; do
             if command -v $tool >/dev/null 2>&1; then
               echo "OK: $tool"
             else
               echo "MISSING: $tool"
             fi
           done
+          if [ -d "backend/github_actions/node_modules/puppeteer" ]; then
+            echo "OK: puppeteer"
+          else
+            echo "MISSING: puppeteer (سيتم تخطي فحص SPA)"
+          fi
 
       - name: Run scanner
         env:
