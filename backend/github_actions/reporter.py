@@ -1,277 +1,330 @@
+
 import os
+import sys
 import json
-import html
-from datetime import datetime
-from supabase import create_client
+import time
+import argparse
+from datetime import datetime, timezone
 
+class SecurityReportGenerator:
+    def __init__(self, target, scan_id, results, output_dir="reports"):
+        self.target = target
+        self.scan_id = scan_id
+        self.results = results if isinstance(results, dict) else {}
+        self.output_dir = output_dir
+        self.timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        
+        if not os.path.exists(self.output_dir):
+            os.makedirs(self.output_dir, exist_ok=True)
 
-SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
-SCAN_ID = os.environ["SCAN_ID"]
-TARGET_URL = os.environ["TARGET_URL"]
+    def calculate_summary_metrics(self):
+        critical = 0
+        high = 0
+        medium = 0
+        low = 0
+        info = 0
 
+        vulnerabilities = self.results.get("vulnerabilities", [])
+        for vuln in vulnerabilities:
+            severity = str(vuln.get("severity", "info")).lower()
+            if severity == "critical":
+                critical += 1
+            elif severity == "high":
+                high += 1
+            elif severity == "medium":
+                medium += 1
+            elif severity == "low":
+                low += 1
+            else:
+                info += 1
 
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
+        total = critical + high + medium + low + info
+        return {
+            "total": total,
+            "critical": critical,
+            "high": high,
+            "medium": medium,
+            "low": low,
+            "info": info
+        }
 
+    def generate_html_report(self):
+        metrics = self.calculate_summary_metrics()
+        html_file = os.path.join(self.output_dir, f"report_{self.scan_id}.html")
+        
+        vulnerabilities = self.results.get("vulnerabilities", [])
+        tool_outputs = self.results.get("tool_outputs", {})
 
-SEVERITY_ICONS = {
-    "critical": "🔴",
-    "high": "🟠",
-    "medium": "🟡",
-    "low": "🟢",
-    "info": "ℹ️",
-}
+        vuln_rows_html = ""
+        if vulnerabilities:
+            for v in vulnerabilities:
+                sev = str(v.get("severity", "INFO")).upper()
+                badge_class = "bg-info"
+                if sev == "CRITICAL": badge_class = "bg-critical"
+                elif sev == "HIGH": badge_class = "bg-high"
+                elif sev == "MEDIUM": badge_class = "bg-medium"
+                elif sev == "LOW": badge_class = "bg-low"
 
-SEVERITY_LABELS = {
-    "critical": "CRITICAL",
-    "high": "HIGH",
-    "medium": "MEDIUM",
-    "low": "LOW",
-    "info": "INFO",
-}
+                vuln_rows_html += f"""
+                <tr>
+                    <td><span class="badge {badge_class}">{sev}</span></td>
+                    <td><strong>{v.get('title', 'Vulnerability Finding')}</strong></td>
+                    <td><code>{v.get('tool', 'Scanner')}</code></td>
+                    <td>{v.get('description', 'No details provided.')}</td>
+                </tr>
+                """
+        else:
+            vuln_rows_html = "<tr><td colspan='4' style='text-align:center;'>No critical security vulnerabilities were discovered during this scan.</td></tr>"
 
-
-def _esc(value) -> str:
-    """إصلاح: HTML escaping - أي نص راجع من أداة فحص ممكن يكون جزء
-    من استجابة الموقع المستهدف نفسه، فلازم يتعامل معاه كـ نص عادي
-    مش HTML عشان منسمحش بـ XSS جوه التقرير نفسه."""
-    return html.escape(str(value), quote=True)
-
-
-def fetch_data():
-    scan = supabase.table("scans").select("*").eq("id", SCAN_ID).execute()
-    results = supabase.table("results").select("*").eq("scan_id", SCAN_ID).execute()
-    logs = supabase.table("logs").select("*").eq("scan_id", SCAN_ID).order("created_at").execute()
-    return (scan.data[0] if scan.data else {}), (results.data or []), (logs.data or [])
-
-
-def generate_txt(scan, results, logs):
-    lines = []
-    lines.append("=" * 70)
-    lines.append("   10blackfingers - Security Assessment Report")
-    lines.append("=" * 70)
-    lines.append(f"Target URL:  {scan.get('target_url', TARGET_URL)}")
-    lines.append(f"Scan ID:     {SCAN_ID}")
-    lines.append(f"Started:     {scan.get('started_at', 'N/A')}")
-    lines.append(f"Completed:   {scan.get('completed_at', 'N/A')}")
-    lines.append(f"Status:      {scan.get('status', 'N/A')}")
-    lines.append("")
-    lines.append("-" * 70)
-    lines.append("   EXECUTIVE SUMMARY")
-    lines.append("-" * 70)
-    lines.append(f"Total Findings:  {scan.get('total_findings', 0)}")
-    lines.append(f"   Critical:      {scan.get('critical_count', 0)}")
-    lines.append(f"   High:          {scan.get('high_count', 0)}")
-    lines.append(f"   Medium:        {scan.get('medium_count', 0)}")
-    lines.append(f"   Low:           {scan.get('low_count', 0)}")
-    lines.append("")
-
-    by_severity = {"critical": [], "high": [], "medium": [], "low": [], "info": []}
-    for r in results:
-        sev = r.get("severity", "info")
-        by_severity.setdefault(sev, []).append(r)
-
-    for severity in ["critical", "high", "medium", "low", "info"]:
-        items = by_severity.get(severity, [])
-        if not items:
-            continue
-        icon = SEVERITY_ICONS.get(severity, "")
-        label = SEVERITY_LABELS.get(severity, severity.upper())
-        lines.append("")
-        lines.append("=" * 70)
-        lines.append(f"   {icon} {label} FINDINGS ({len(items)})")
-        lines.append("=" * 70)
-
-        for i, r in enumerate(items, 1):
-            lines.append("")
-            lines.append(f"[{i}] {r.get('title', 'Untitled')}")
-            lines.append("-" * 60)
-            lines.append(f"   Tool:       {r.get('tool_name', 'N/A')}")
-            lines.append(f"   Phase:      {r.get('phase', 'N/A')}")
-            lines.append(f"   Severity:   {r.get('severity', 'N/A')}")
-
-            if r.get("cvss_score"):
-                lines.append(f"   CVSS Score: {r['cvss_score']}")
-            if r.get("cve_id"):
-                lines.append(f"   CVE:        {r['cve_id']}")
-
-            if r.get("description"):
-                lines.append("")
-                lines.append("   DESCRIPTION:")
-                for line in str(r["description"]).split("\n"):
-                    lines.append(f"     {line}")
-
-            if r.get("evidence"):
-                lines.append("")
-                lines.append("   EVIDENCE & SENSITIVE DATA (Real Data from Target):")
-                ev = r["evidence"]
-                if isinstance(ev, dict):
-                    for k, v in ev.items():
-                        # تم زيادة الحد الأو استعراض البيانات كاملة لضمان ظهور البيانات الحساسة بوضوح
-                        val = str(v)
-                        lines.append(f"     {k}: {val}")
-
-            if r.get("remediation"):
-                lines.append("")
-                lines.append("   REMEDIATION:")
-                for line in str(r["remediation"]).split("\n"):
-                    lines.append(f"     {line}")
-
-    lines.append("")
-    lines.append("=" * 70)
-    lines.append("   END OF REPORT")
-    lines.append("=" * 70)
-    lines.append(f"Generated by 10blackfingers at {datetime.utcnow().isoformat()} UTC")
-    return "\n".join(lines)
-
-
-def generate_html(scan, results, logs):
-    by_severity = {"critical": [], "high": [], "medium": [], "low": [], "info": []}
-    for r in results:
-        sev = r.get("severity", "info")
-        by_severity.setdefault(sev, []).append(r)
-
-    findings_html = ""
-    for severity in ["critical", "high", "medium", "low", "info"]:
-        items = by_severity.get(severity, [])
-        if not items:
-            continue
-        icon = SEVERITY_ICONS.get(severity, "")
-        label = SEVERITY_LABELS.get(severity, severity.upper())
-
-        findings_html += f'<h2 class="severity-{severity}">{icon} {label} ({len(items)})</h2>'
-        for i, r in enumerate(items, 1):
-            evidence_str = ""
-            if r.get("evidence"):
-                ev = r["evidence"]
-                if isinstance(ev, dict):
-                    for k, v in ev.items():
-                        # عرض البيانات الحساسة بالكامل بدون اقتطاع لتظهر في التقارير
-                        evidence_str += f"<li><strong>{_esc(k)}:</strong> <code>{_esc(str(v))}</code></li>"
-
-            cvss_span = f'<span><strong>CVSS:</strong> {_esc(r["cvss_score"])}</span>' if r.get('cvss_score') else ''
-            cve_span = f'<span><strong>CVE:</strong> {_esc(r["cve_id"])}</span>' if r.get('cve_id') else ''
-            desc_p = f'<p class="desc">{_esc(r["description"])}</p>' if r.get('description') else ''
-            ev_div = f'<div class="evidence"><h4>Evidence & Sensitive Data</h4><ul>{evidence_str}</ul></div>' if evidence_str else ''
-            rem_div = f'<div class="remediation"><h4>Remediation</h4><pre>{_esc(r["remediation"])}</pre></div>' if r.get('remediation') else ''
-
-            findings_html += f"""
-            <div class="finding severity-{severity}">
-                <h3>[{i}] {_esc(r.get('title', 'Untitled'))}</h3>
-                <div class="meta">
-                    <span><strong>Tool:</strong> {_esc(r.get('tool_name', 'N/A'))}</span>
-                    <span><strong>Phase:</strong> {_esc(r.get('phase', 'N/A'))}</span>
-                    <span><strong>Severity:</strong> {_esc(r.get('severity', 'N/A'))}</span>
-                    {cvss_span}{cve_span}
-                </div>
-                {desc_p}{ev_div}{rem_div}
+        raw_logs_html = ""
+        for tool, out in tool_outputs.items():
+            raw_logs_html += f"""
+            <div class="log-section">
+                <h3>🔍 Output: {tool}</h3>
+                <pre><code>{out}</code></pre>
             </div>
             """
 
-    target_safe = _esc(scan.get('target_url', TARGET_URL))
-    html_out = f"""<!DOCTYPE html>
+        html_content = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Security Report - {target_safe}</title>
-<style>
-    body {{ font-family: -apple-system, Segoe UI, sans-serif; max-width: 1000px; margin: 40px auto; padding: 20px; background: #f5f5f5; color: #222; }}
-    h1 {{ color: #111; border-bottom: 3px solid #00ff41; padding-bottom: 10px; }}
-    .summary {{ background: white; padding: 20px; border-radius: 8px; margin: 20px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }}
-    .stats {{ display: flex; gap: 20px; flex-wrap: wrap; }}
-    .stat {{ padding: 15px 25px; border-radius: 8px; color: white; font-weight: bold; }}
-    .stat.critical {{ background: #dc2626; }}
-    .stat.high {{ background: #ea580c; }}
-    .stat.medium {{ background: #ca8a04; }}
-    .stat.low {{ background: #16a34a; }}
-    .stat.total {{ background: #1e293b; }}
-    h2 {{ margin-top: 40px; padding: 10px; border-radius: 6px; }}
-    h2.severity-critical {{ background: #fee2e2; color: #991b1b; }}
-    h2.severity-high {{ background: #ffedd5; color: #9a3412; }}
-    h2.severity-medium {{ background: #fef9c3; color: #854d0e; }}
-    h2.severity-low {{ background: #dcfce7; color: #166534; }}
-    h2.severity-info {{ background: #e0e7ff; color: #3730a3; }}
-    .finding {{ background: white; padding: 20px; border-radius: 8px; margin: 15px 0; border-left: 5px solid #ccc; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }}
-    .finding.severity-critical {{ border-left-color: #dc2626; }}
-    .finding.severity-high {{ border-left-color: #ea580c; }}
-    .finding.severity-medium {{ border-left-color: #ca8a04; }}
-    .finding.severity-low {{ border-left-color: #16a34a; }}
-    .finding h3 {{ margin-top: 0; color: #111; }}
-    .meta {{ display: flex; gap: 15px; flex-wrap: wrap; font-size: 0.9em; color: #555; margin: 10px 0; }}
-    .desc {{ background: #f9fafb; padding: 12px; border-radius: 6px; }}
-    .evidence {{ background: #1e293b; color: #e2e8f0; padding: 15px; border-radius: 6px; margin: 15px 0; }}
-    .evidence h4 {{ margin-top: 0; color: #00ff41; }}
-    .evidence ul {{ list-style: none; padding-left: 0; }}
-    .evidence li {{ padding: 6px 0; border-bottom: 1px solid #334155; word-break: break-all; }}
-    .evidence code {{ color: #fbbf24; font-family: monospace; white-space: pre-wrap; }}
-    .remediation {{ background: #f0fdf4; padding: 15px; border-radius: 6px; margin: 15px 0; border-left: 4px solid #16a34a; }}
-    .remediation h4 {{ margin-top: 0; color: #166534; }}
-    .remediation pre {{ background: #1e293b; color: #e2e8f0; padding: 12px; border-radius: 6px; overflow-x: auto; white-space: pre-wrap; }}
-    @media print {{
-        body {{ background: white; }}
-        .finding {{ break-inside: avoid; }}
-    }}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>10blackfingers - Security Scan Report ({self.scan_id})</title>
+    <style>
+        :root {{
+            --bg-color: #0d1117;
+            --card-bg: #161b22;
+            --border-color: #30363d;
+            --text-color: #c9d1d9;
+            --heading-color: #58a6ff;
+            --critical: #f85149;
+            --high: #da3633;
+            --medium: #d29922;
+            --low: #3fb950;
+            --info: #58a6ff;
+        }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            line-height: 1.6;
+        }}
+        .container {{
+            max-width: 1200px;
+            margin: 0 auto;
+        }}
+        .header {{
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 20px;
+            margin-bottom: 30px;
+        }}
+        .header h1 {{
+            color: var(--heading-color);
+            margin: 0 0 10px 0;
+        }}
+        .meta-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }}
+        .meta-card {{
+            background: var(--card-bg);
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+        }}
+        .metrics-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }}
+        .metric-card {{
+            background: var(--card-bg);
+            padding: 20px;
+            border-radius: 6px;
+            text-align: center;
+            border: 1px solid var(--border-color);
+        }}
+        .metric-card .number {{
+            font-size: 2.5rem;
+            font-weight: bold;
+        }}
+        .table-container {{
+            overflow-x: auto;
+            margin-bottom: 30px;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--card-bg);
+            border-radius: 6px;
+            overflow: hidden;
+        }}
+        th, td {{
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }}
+        th {{
+            background-color: #21262d;
+            color: #f0f6fc;
+        }}
+        .badge {{
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 0.8rem;
+            color: #ffffff;
+        }}
+        .bg-critical {{ background-color: var(--critical); }}
+        .bg-high {{ background-color: var(--high); }}
+        .bg-medium {{ background-color: var(--medium); color: #000; }}
+        .bg-low {{ background-color: var(--low); color: #000; }}
+        .bg-info {{ background-color: var(--info); color: #000; }}
+        .log-section {{
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }}
+        pre {{
+            background: #010409;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+            color: #7ee787;
+            font-size: 0.9rem;
+        }}
+    </style>
 </head>
 <body>
-    <h1>🛡️ 10blackfingers Security Report</h1>
-    <div class="summary">
-        <p><strong>Target:</strong> {target_safe}</p>
-        <p><strong>Scan ID:</strong> {_esc(SCAN_ID)}</p>
-        <p><strong>Started:</strong> {_esc(scan.get('started_at', 'N/A'))}</p>
-        <p><strong>Completed:</strong> {_esc(scan.get('completed_at', 'N/A'))}</p>
-        <div class="stats">
-            <div class="stat total">Total: {scan.get('total_findings', 0)}</div>
-            <div class="stat critical">Critical: {scan.get('critical_count', 0)}</div>
-            <div class="stat high">High: {scan.get('high_count', 0)}</div>
-            <div class="stat medium">Medium: {scan.get('medium_count', 0)}</div>
-            <div class="stat low">Low: {scan.get('low_count', 0)}</div>
+    <div class="container">
+        <div class="header">
+            <h1>🛡️ 10blackfingers Security Assessment Report</h1>
+            <p>Automated Penetration Testing & Vulnerability Assessment Dashboard Findings</p>
+        </div>
+
+        <div class="meta-grid">
+            <div class="meta-card">
+                <strong>Target Domain / IP:</strong><br>{self.target}
+            </div>
+            <div class="meta-card">
+                <strong>Scan Identifier:</strong><br><code>{self.scan_id}</code>
+            </div>
+            <div class="meta-card">
+                <strong>Timestamp:</strong><br>{self.timestamp}
+            </div>
+            <div class="meta-card">
+                <strong>Status:</strong><br><span style="color:#3fb950; font-weight:bold;">COMPLETED</span>
+            </div>
+        </div>
+
+        <h2>📊 Executive Summary</h2>
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="number">{metrics['total']}</div>
+                <div>Total Findings</div>
+            </div>
+            <div class="metric-card" style="border-top: 4px solid var(--critical);">
+                <div class="number" style="color: var(--critical);">{metrics['critical']}</div>
+                <div>Critical</div>
+            </div>
+            <div class="metric-card" style="border-top: 4px solid var(--high);">
+                <div class="number" style="color: var(--high);">{metrics['high']}</div>
+                <div>High</div>
+            </div>
+            <div class="metric-card" style="border-top: 4px solid var(--medium);">
+                <div class="number" style="color: var(--medium);">{metrics['medium']}</div>
+                <div>Medium</div>
+            </div>
+            <div class="metric-card" style="border-top: 4px solid var(--low);">
+                <div class="number" style="color: var(--low);">{metrics['low']}</div>
+                <div>Low</div>
+            </div>
+        </div>
+
+        <h2>🚨 Vulnerability Breakdown</h2>
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Severity</th>
+                        <th>Vulnerability</th>
+                        <th>Source Tool</th>
+                        <th>Description & Evidence</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {vuln_rows_html}
+                </tbody>
+            </table>
+        </div>
+
+        <h2>📋 Execution Console Logs</h2>
+        {raw_logs_html if raw_logs_html else "<p>No raw execution logs were generated.</p>"}
+
+        <div style="text-align: center; margin-top: 50px; color: #8b949e; font-size: 0.85rem;">
+            Generated by 10blackfingers Automated Security Engine • ISEF Competition Edition
         </div>
     </div>
-    {findings_html}
-    <hr>
-    <p style="text-align: center; color: #888; font-size: 0.9em;">
-        Generated by 10blackfingers at {datetime.utcnow().isoformat()} UTC
-    </p>
 </body>
-</html>"""
-    return html_out
+</html>
+"""
+        with open(html_file, "w", encoding="utf-8") as f:
+            f.write(html_content)
 
+        print(f"[+] HTML Report generated successfully: {html_file}")
+        return html_file
 
-def save_reports(scan, results, logs):
-    txt_content = generate_txt(scan, results, logs)
-    html_content = generate_html(scan, results, logs)
+    def generate_json_report(self):
+        json_file = os.path.join(self.output_dir, f"report_{self.scan_id}.json")
+        report_data = {
+            "scan_id": self.scan_id,
+            "target": self.target,
+            "timestamp": self.timestamp,
+            "summary": self.calculate_summary_metrics(),
+            "results": self.results
+        }
+        with open(json_file, "w", encoding="utf-8") as f:
+            json.dump(report_data, f, indent=4)
 
-    try:
-        supabase.storage.from_("reports").upload(
-            f"{SCAN_ID}/report.txt",
-            txt_content.encode("utf-8"),
-            {"content-type": "text/plain", "upsert": "true"},
-        )
-    except Exception as e:
-        print(f"TXT upload error: {e}")
+        print(f"[+] JSON Report generated successfully: {json_file}")
+        return json_file
 
-    try:
-        supabase.storage.from_("reports").upload(
-            f"{SCAN_ID}/report.html",
-            html_content.encode("utf-8"),
-            {"content-type": "text/html", "upsert": "true"},
-        )
-    except Exception as e:
-        print(f"HTML upload error: {e}")
-
-    return txt_content, html_content
-
+    def generate_all(self):
+        html_path = self.generate_html_report()
+        json_path = self.generate_json_report()
+        return {"html": html_path, "json": json_path}
 
 def main():
-    print(f"Generating reports for scan {SCAN_ID}")
-    scan, results, logs = fetch_data()
-    print(f"Fetched {len(results)} results")
-    txt_content, html_content = save_reports(scan, results, logs)
-    print(f"TXT report: {len(txt_content)} bytes")
-    print(f"HTML report: {len(html_content)} bytes")
-    print("Reports generated successfully")
+    parser = argparse.ArgumentParser(description="10blackfingers Security Report Generator")
+    parser.add_argument("--target", required=True, help="Target URL or IP Address")
+    parser.add_argument("--scan-id", required=True, help="Unique Scan UUID")
+    parser.add_argument("--results-json", required=True, help="Path to JSON results file")
+    parser.add_argument("--output-dir", default="reports", help="Output directory for generated reports")
 
+    args = parser.parse_args()
+
+    try:
+        with open(args.results_json, "r", encoding="utf-8") as f:
+            results_data = json.load(f)
+    except Exception as e:
+        print(f"[-] Error loading results JSON: {e}")
+        results_data = {}
+
+    generator = SecurityReportGenerator(
+        target=args.target,
+        scan_id=args.scan_id,
+        results=results_data,
+        output_dir=args.output_dir
+    )
+    generator.generate_all()
 
 if __name__ == "__main__":
     main()

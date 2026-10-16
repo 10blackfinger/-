@@ -3,90 +3,126 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>10blackfingers - AI Vulnerability Scanner</title>
+    <title>10blackfingers | Advanced Cyber Security Platform</title>
     <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&family=Fira+Code:wght@400;600&display=swap" rel="stylesheet">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
 </head>
-<body>
+<body class="cyber-theme">
+    <div class="matrix-bg"></div>
     <div class="container">
-        <header>
-            <div class="logo">🛡️</div>
+        <header class="glass-header">
+            <div class="logo-wrapper">
+                <div class="logo-glow">🛡️</div>
+                <div class="badge-isef">ISEF 2026 Elite</div>
+            </div>
             <h1>10blackfingers</h1>
-            <p class="tagline">AI-Powered Web Vulnerability Scanner</p>
-            <p class="subtitle">منصة فحص أمني متقدمة بـ 52 أداة</p>
+            <p class="tagline">Next-Gen Autonomous Penetration Testing & Security Assessment Ecosystem</p>
+            <div class="stats-badge-row">
+                <span class="tech-tag">⚡ 250+ Security Tools</span>
+                <span class="tech-tag">🧠 AI-Orchestrated Engine</span>
+                <span class="tech-tag">🔒 Supabase & GitHub Actions</span>
+            </div>
         </header>
 
         <main>
-            <div id="scan-form-container">
+            <!-- Form Section -->
+            <div id="scan-form-container" class="glass-card">
                 <form id="scan-form">
-                    <div class="input-group">
-                        <input type="url" id="target-url" placeholder="https://example.com" required>
+                    <div class="input-section">
+                        <label for="target-url">🎯 رابط الهدف المستهدف (Target URL)</label>
+                        <div class="input-with-icon">
+                            <span class="input-icon">🌐</span>
+                            <input type="url" id="target-url" placeholder="https://target-system.com" required autocomplete="off">
+                        </div>
                     </div>
-                    <div class="consent">
-                        <label>
+                    
+                    <div class="consent-box">
+                        <label class="checkbox-container">
                             <input type="checkbox" id="consent-check" required>
-                            <span>أُقر بأنني أملك تصريحًا كتابيًا لفحص هذا الموقع</span>
+                            <span class="checkmark"></span>
+                            <span class="consent-text">أُقر قانونياً وأتحمل المسؤولية الكاملة بأنني أملك تصريحاً كتابياً رسمياً وموثقاً لفحص هذا الأصل الرقمي.</span>
                         </label>
                     </div>
-                    <button type="submit" id="scan-button">
-                        <span class="btn-icon">🔍</span>
-                        <span class="btn-text">ابدأ الفحص</span>
+
+                    <button type="submit" id="scan-button" class="glow-button">
+                        <span class="btn-icon">🚀</span>
+                        <span class="btn-text">إطلاق المحرك وبدء الفحص السيبراني الشامل</span>
                     </button>
                 </form>
             </div>
 
-            <div id="progress-container" class="hidden">
-                <div class="progress-info">
-                    <div class="spinner"></div>
+            <!-- Progress / Terminal Simulation -->
+            <div id="progress-container" class="glass-card hidden">
+                <div class="progress-header">
+                    <div class="radar-scanner"></div>
                     <div>
-                        <p id="progress-status">جاري الفحص...</p>
-                        <p id="progress-detail" class="detail">قد يستغرق 5-15 دقيقة</p>
+                        <h3 id="progress-status">جاري تشغيل الفحص السيبراني المتقدم...</h3>
+                        <p id="progress-detail" class="detail">يتم الآن تنفيذ الأدوات عبر الحاويات السحابية المعزولة</p>
                     </div>
                 </div>
-                <div class="progress-bar">
+                <div class="progress-bar-container">
                     <div id="progress-fill"></div>
+                </div>
+                <div class="terminal-box" id="terminal-logs">
+                    <div class="terminal-line">[+] Initializing 10blackfingers core engine...</div>
+                    <div class="terminal-line">[+] Connecting to GitHub Actions runner nodes...</div>
+                    <div class="terminal-line">[+] Verifying target liveness and WAF posture...</div>
                 </div>
             </div>
 
-            <div id="results-container" class="hidden">
+            <!-- Results Section -->
+            <div id="results-container" class="glass-card hidden">
                 <div class="results-header">
-                    <h2>📊 نتائج الفحص</h2>
+                    <h2>📊 تقرير نتائج الفحص السيبراني المتقدم</h2>
                     <div class="results-meta" id="results-meta"></div>
                 </div>
 
                 <div class="stats-grid" id="stats-grid"></div>
 
-                <div class="actions">
+                <div class="filter-tabs">
+                    <button class="filter-tab active" onclick="filterFindings('all')">الكل</button>
+                    <button class="filter-tab critical" onclick="filterFindings('critical')">حرجة</button>
+                    <button class="filter-tab high" onclick="filterFindings('high')">عالية</button>
+                    <button class="filter-tab medium" onclick="filterFindings('medium')">متوسطة</button>
+                    <button class="filter-tab low" onclick="filterFindings('low')">منخفضة</button>
+                </div>
+
+                <div class="actions-grid">
                     <button class="action-btn html" onclick="downloadReport('html')">
-                        🌐 عرض التقرير (HTML)
+                        🌐 عرض التقرير التفاعلي (HTML)
                     </button>
                     <button class="action-btn txt" onclick="downloadReport('txt')">
-                        📄 تحميل TXT
+                        📄 تحميل تقرير نصي (TXT)
                     </button>
                     <button class="action-btn pdf" onclick="downloadReport('pdf')">
-                        📕 تحميل PDF
+                        📕 تحميل التقرير الرسمي (PDF)
                     </button>
                     <button class="action-btn new" onclick="resetScan()">
-                        🔄 فحص جديد
+                        🔄 بدء فحص هدف جديد
                     </button>
                 </div>
 
                 <div class="findings-list" id="findings-list"></div>
             </div>
 
+            <!-- Error Box -->
             <div id="error-container" class="hidden">
-                <div class="error-box">
-                    <h3>⚠️ حدث خطأ</h3>
+                <div class="glass-card error-box">
+                    <div class="error-icon">⚠️</div>
+                    <h3>تعذر إتمام العملية</h3>
                     <p id="error-message"></p>
-                    <button onclick="resetScan()">حاول مرة أخرى</button>
+                    <button class="glow-button secondary" onclick="resetScan()">العودة ومحاولة مجدداً</button>
                 </div>
             </div>
         </main>
 
-        <footer>
-            <p>52 Security Tools • Real Evidence • PDF/TXT/HTML Reports</p>
-            <p class="copyright">© 2026 10blackfingers - ISEF Project</p>
+        <footer class="glass-footer">
+            <p>10blackfingers Autonomous Security Platform • Built for ISEF International Science and Engineering Fair</p>
+            <p class="copyright">© 2026 10blackfingers Ecosystem. All Rights Reserved.</p>
         </footer>
     </div>
 

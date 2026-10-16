@@ -1,13 +1,13 @@
 {
-    "name": "10blackfingers - Vulnerability Scanner",
+    "name": "10blackfingers - Advanced Cyber Security Platform",
     "short_name": "10blackfingers",
-    "description": "AI-Powered Web Vulnerability Scanner with 52 tools",
+    "description": "Next-Gen Autonomous Penetration Testing & Security Assessment Ecosystem for ISEF",
     "start_url": "/",
     "scope": "/",
     "display": "standalone",
     "orientation": "portrait-primary",
-    "background_color": "#0a0a0a",
-    "theme_color": "#00ff41",
+    "background_color": "#030712",
+    "theme_color": "#38ef7d",
     "lang": "ar",
     "dir": "rtl",
     "icons": [

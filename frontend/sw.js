@@ -1,9 +1,17 @@
-const CACHE_NAME = "10bf-cache-v1";
-const APP_SHELL = ["/", "/index.html", "/style.css", "/app.js", "/manifest.json"];
+const CACHE_NAME = "10bf-cyber-cache-v2";
+const APP_SHELL = [
+    "/",
+    "/index.html",
+    "/style.css",
+    "/app.js",
+    "/manifest.json"
+];
 
 self.addEventListener("install", (e) => {
     e.waitUntil(
-        caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)).catch(() => {})
+        caches.open(CACHE_NAME)
+            .then((cache) => cache.addAll(APP_SHELL))
+            .catch(() => {})
     );
     self.skipWaiting();
 });
@@ -11,22 +19,34 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
     e.waitUntil(
         caches.keys().then((keys) =>
-            Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
+            Promise.all(
+                keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
+            )
         )
     );
     self.clients.claim();
 });
 
 self.addEventListener("fetch", (e) => {
-    // منخزنش مؤقتًا أي حاجة غير GET، ومنلمسش طلبات الـ API (scan/report)
-    // عشان نفاداي أي نتايج قديمة/مخزنة بالغلط
-    if (e.request.method !== "GET" || e.request.url.includes("/api/")) {
+    const url = new URL(e.request.url);
+
+    // استثناء تام لطلبات الـ API أو التقارير لضمان جلب البيانات الحية دائماً
+    if (e.request.method !== "GET" || url.pathname.includes("/api/")) {
         return;
     }
 
     e.respondWith(
         caches.match(e.request).then((cached) => {
-            if (cached) return cached;
+            if (cached) {
+                // تحديث الذاكرة المؤقتة في الخلفية عند توافر اتصال
+                fetch(e.request).then((response) => {
+                    if (response && response.status === 200) {
+                        caches.open(CACHE_NAME).then((cache) => cache.put(e.request, response));
+                    }
+                }).catch(() => {});
+                return cached;
+            }
+
             return fetch(e.request)
                 .then((response) => {
                     if (response && response.status === 200) {
@@ -35,7 +55,7 @@ self.addEventListener("fetch", (e) => {
                     }
                     return response;
                 })
-                .catch(() => cached);
+                .catch(() => caches.match("/index.html"));
         })
     );
 });

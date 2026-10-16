@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import os
 import re
 import json
@@ -8,20 +10,12 @@ from urllib.parse import urlparse
 
 from supabase import create_client
 
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
+SCAN_ID = os.getenv("SCAN_ID", "local-scan")
+TARGET_URL = os.getenv("TARGET_URL", "http://localhost")
 
-SUPABASE_URL = os.environ["SUPABASE_URL"]
-SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
-SCAN_ID = os.environ["SCAN_ID"]
-TARGET_URL = os.environ["TARGET_URL"]
-
-
-supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-
-
-# ============== WORDLIST داخلي (إصلاح مشكلة FFuf / Wfuzz) ==============
-# wordlist أساسي مدمج في الكود نفسه، عشان نضمن وجوده دايمًا
-# على أي GitHub Actions runner من غير ما نعتمد على مسار خارجي زي
-# /usr/share/wordlists/dirb/common.txt اللي ممكن ميكونش موجود
+supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY) if SUPABASE_URL and SUPABASE_SERVICE_KEY else None
 
 BASIC_WORDLIST = [
     "admin", "login", "api", "test", "backup", "config", "wp-admin",
@@ -35,36 +29,35 @@ BASIC_WORDLIST = [
     "CHANGELOG.md", "index.php.bak", "config.php.bak", "database.yml",
 ]
 
-
 def log(message, level="info"):
     try:
-        supabase.table("logs").insert({
-            "scan_id": SCAN_ID,
-            "level": level,
-            "message": message,
-        }).execute()
+        if supabase:
+            supabase.table("logs").insert({
+                "scan_id": SCAN_ID,
+                "level": level,
+                "message": message,
+            }).execute()
     except Exception:
         pass
     print(f"[{level.upper()}] {message}")
 
-
 def save_result(phase, tool_name, severity, title, description="", evidence=None, remediation="", cve_id=None, cvss=None):
     try:
-        supabase.table("results").insert({
-            "scan_id": SCAN_ID,
-            "phase": phase,
-            "tool_name": tool_name,
-            "severity": severity,
-            "title": title,
-            "description": description,
-            "evidence": evidence or {},
-            "remediation": remediation,
-            "cve_id": cve_id,
-            "cvss_score": cvss,
-        }).execute()
+        if supabase:
+            supabase.table("results").insert({
+                "scan_id": SCAN_ID,
+                "phase": phase,
+                "tool_name": tool_name,
+                "severity": severity,
+                "title": title,
+                "description": description,
+                "evidence": evidence or {},
+                "remediation": remediation,
+                "cve_id": cve_id,
+                "cvss_score": cvss,
+            }).execute()
     except Exception as e:
         print(f"Error saving result: {e}")
-
 
 def run_command(cmd, timeout=300):
     try:
@@ -81,44 +74,27 @@ def run_command(cmd, timeout=300):
     except Exception as e:
         return "", str(e), -1
 
-
 def write_wordlist_file():
-    """يكتب الـ wordlist الداخلي في ملف مؤقت ويرجع مساره"""
     path = tempfile.mktemp(suffix="_wordlist.txt")
     with open(path, "w") as f:
         f.write("\n".join(BASIC_WORDLIST))
     return path
 
-
-# ============== أدلة حقيقية من محتوى الموقع (Body Content) ==============
-# الدوال دي بتجيب جزء فعلي من استجابة الموقع (مش بس كود الاستجابة)
-# عشان أي finding حرج يتسجل بدليل حقيقي يثبته، مش مجرد "كود 200".
-
 def fetch_body_snippet(url, max_bytes=800, timeout=15):
-    """يجيب جزء من محتوى الصفحة الفعلي (Body) من الموقع المستهدف كدليل"""
     stdout, _, _ = run_command(
         f"curl -s -L --max-time {timeout} '{url}' 2>/dev/null | head -c {max_bytes}",
         timeout=timeout + 5,
     )
     return (stdout or "").strip()
 
-
 def fetch_content_type(url, timeout=15):
-    """يجيب Content-Type الفعلي من استجابة الموقع"""
     stdout, _, _ = run_command(
         f"curl -s -I -L --max-time {timeout} '{url}' 2>/dev/null | grep -i '^content-type' | head -1",
         timeout=timeout + 5,
     )
     return (stdout or "").strip()
 
-
-# ============== إصلاح 1: فحص إن الموقع شغال قبل أي حاجة ==============
-
 def check_target_alive():
-    """
-    يتأكد إن الموقع شغال فعلاً قبل ما نبدأ أي فحص.
-    يرجع (alive: bool, info: dict)
-    """
     stdout, stderr, code = run_command(
         f"curl -s -o /dev/null -w '%{{http_code}}' --max-time 15 -L {TARGET_URL} 2>/dev/null",
         timeout=20,
@@ -144,16 +120,7 @@ def check_target_alive():
 
     return True, {"status_code": status_code, "reason": "الموقع شغال"}
 
-
-# ============== جمع أدلة حقيقية من الموقع (للتقرير) ==============
-
 def gather_target_evidence():
-    """
-    يجمع أدلة حقيقية وموثقة من الموقع المستهدف لحظة الفحص:
-    Headers الفعلية، كود الاستجابة، زمن الاستجابة، وعنوان IP الحقيقي.
-    بتتسجل كـ finding مستقل عشان تظهر في التقرير كدليل يثبت
-    إن الفحص تم فعلاً على الموقع الحقيقي وإن النتايج ليست وهمية.
-    """
     stdout, _, _ = run_command(
         f"curl -s -D - -o /dev/null -w "
         f"'\\nHTTP_STATUS:%{{http_code}}\\nTOTAL_TIME:%{{time_total}}s\\nREMOTE_IP:%{{remote_ip}}\\nREDIRECT_URL:%{{redirect_url}}' "
@@ -175,14 +142,10 @@ def gather_target_evidence():
     )
     return evidence
 
-
-# ============== وحدة استخراج بيانات PII وقواعد البيانات والملفات الشاملة (المضافة حديثاً للمشروع العلمي) ==============
-
 def phase_advanced_exploitation():
     log("Starting advanced exploitation & data extraction phase (PII, DB, Files)...")
     domain = urlparse(TARGET_URL).netloc
 
-    # 1. سحب بيانات PII الحقيقية عبر التفتيش المتقدم ونصوص الاستخراج
     log("Extracting real PII data (Emails, Phone numbers, SSN, Credentials)...")
     stdout, _, _ = run_command(
         f"katana -u {TARGET_URL} -silent -d 3 2>/dev/null | grep -E '\.php|\.json|\.aspx|\.jsp|api'",
@@ -207,7 +170,6 @@ def phase_advanced_exploitation():
                 remediation="تشفير أو اخفاء بيانات المستخدمين الحساسة ومنع ظهورها في الاستجابات العامة."
             )
 
-    # 2. تفريغ وتسريب جداول قاعدة البيانات (Database Tables Dump)
     log("Dumping database tables via sqlmap advanced automated extraction...")
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
         db_dump_out = f.name
@@ -233,7 +195,6 @@ def phase_advanced_exploitation():
         if os.path.exists(db_dump_out):
             os.remove(db_dump_out)
 
-    # 3. سحب الملفات الكاملة الحساسة ونظام الملفات (Full Files Extraction)
     log("Extracting full sensitive files...")
     target_files = [
         "config.php", "wp-config.php", ".env", "database.yml", 
@@ -255,14 +216,10 @@ def phase_advanced_exploitation():
             remediation="حماية مجلدات الجذر ومنع الوصول المباشر لملفات الإعدادات والنسخ الاحتياطي."
         )
 
-
-# ============== PHASE 1: RECONNAISSANCE ==============
-
 def phase_recon():
     log("Starting reconnaissance phase")
     domain = urlparse(TARGET_URL).netloc
 
-    # 1. Nmap
     log("Running nmap...")
     stdout, _, _ = run_command(
         f"nmap -T4 --top-ports 100 -sV {domain} -oX - 2>/dev/null",
@@ -276,7 +233,6 @@ def phase_recon():
                 f"Port {port} is open and running {service}",
                 evidence={"port": port, "service": service})
 
-    # 2. WhatWeb
     log("Running WhatWeb...")
     stdout, _, _ = run_command(f"whatweb {TARGET_URL} --log-json=- 2>/dev/null", timeout=60)
     if stdout:
@@ -292,7 +248,6 @@ def phase_recon():
         except Exception as e:
             log(f"WhatWeb parse error: {e}", "warning")
 
-    # 3. WAFW00F
     log("Running WAFW00F...")
     stdout, _, _ = run_command(f"wafw00f {TARGET_URL} -a 2>/dev/null", timeout=60)
     if stdout and "is behind" in stdout:
@@ -303,7 +258,6 @@ def phase_recon():
                 "Web Application Firewall detected",
                 evidence={"waf": waf_match.group(1).strip()})
 
-    # 4. Subfinder
     log("Running subfinder...")
     stdout, _, _ = run_command(f"subfinder -d {domain} -silent 2>/dev/null", timeout=120)
     if stdout:
@@ -314,7 +268,6 @@ def phase_recon():
                 "Subdomains discovered",
                 evidence={"subdomains": subdomains[:100]})
 
-    # 5. Amass
     log("Running amass...")
     stdout, _, _ = run_command(f"amass enum -passive -d {domain} -timeout 2 2>/dev/null", timeout=120)
     if stdout:
@@ -325,7 +278,6 @@ def phase_recon():
                 "Passive enumeration results",
                 evidence={"entries": entries[:100]})
 
-    # 6. HTTPX
     log("Running httpx...")
     stdout, _, _ = run_command(
         f"httpx -u {TARGET_URL} -json -silent -tech-detect -status-code -title 2>/dev/null",
@@ -344,7 +296,6 @@ def phase_recon():
         except json.JSONDecodeError:
             pass
 
-    # 7. Katana
     log("Running katana...")
     stdout, _, _ = run_command(
         f"katana -u {TARGET_URL} -silent -d 2 -jc -timeout 5 2>/dev/null | head -200",
@@ -357,13 +308,11 @@ def phase_recon():
             "URLs discovered via crawling",
             evidence={"urls": urls[:100]})
 
-    # 7-ب. دعم مواقع SPA (React/Angular/Vue) عبر Puppeteer
     try:
         detect_spa_and_render()
     except Exception as e:
         log(f"SPA detection skipped: {e}", "warning")
 
-    # 8. Gau
     log("Running gau...")
     stdout, _, _ = run_command(
         f"echo {domain} | gau --threads 5 2>/dev/null | head -200",
@@ -377,7 +326,6 @@ def phase_recon():
                 "Historical URLs from Wayback Machine",
                 evidence={"urls": urls[:100]})
 
-    # 9. Waybackurls
     log("Running waybackurls...")
     stdout, _, _ = run_command(
         f"echo {domain} | waybackurls 2>/dev/null | head -200",
@@ -391,7 +339,6 @@ def phase_recon():
                 "URLs from Wayback Machine",
                 evidence={"urls": urls[:100]})
 
-    # 10. Dnsx
     log("Running dnsx...")
     stdout, _, _ = run_command(
         f"echo {domain} | dnsx -silent -a -resp 2>/dev/null",
@@ -403,7 +350,6 @@ def phase_recon():
             "DNS A records for target",
             evidence={"output": stdout[:500]})
 
-    # 11. Naabu
     log("Running naabu...")
     stdout, _, _ = run_command(
         f"naabu -host {domain} -top-ports 100 -silent 2>/dev/null",
@@ -417,7 +363,6 @@ def phase_recon():
                 "Open ports discovered",
                 evidence={"ports": ports})
 
-    # 12. Tlsx
     log("Running tlsx...")
     stdout, _, _ = run_command(
         f"echo {domain} | tlsx -silent -san -cn -tls-version 2>/dev/null",
@@ -429,7 +374,6 @@ def phase_recon():
             "SSL certificate details",
             evidence={"output": stdout[:500]})
 
-    # 13. WHOIS
     log("Running whois...")
     stdout, _, _ = run_command(f"whois {domain} 2>/dev/null | head -50", timeout=60)
     if stdout:
@@ -438,7 +382,6 @@ def phase_recon():
             "Domain registration details",
             evidence={"output": stdout[:1000]})
 
-    # 14. Dig
     log("Running dig...")
     stdout, _, _ = run_command(f"dig {domain} ANY +short 2>/dev/null", timeout=30)
     if stdout:
@@ -447,7 +390,6 @@ def phase_recon():
             "DNS ANY query results",
             evidence={"output": stdout[:500]})
 
-    # 15. CeWL
     log("Running cewl...")
     stdout, _, _ = run_command(f"cewl {TARGET_URL} -d 2 -m 5 2>/dev/null | head -50", timeout=120)
     if stdout:
@@ -458,7 +400,6 @@ def phase_recon():
                 "Custom wordlist generated",
                 evidence={"words": words[:50]})
 
-    # 16. SSLyze
     log("Running sslyze...")
     stdout, _, _ = run_command(
         f"sslyze --regular {domain} 2>/dev/null | head -100",
@@ -470,7 +411,6 @@ def phase_recon():
             "Certificate and cipher analysis",
             evidence={"output": stdout[:1000]})
 
-    # 17. DNSRecon
     log("Running dnsrecon...")
     stdout, _, _ = run_command(
         f"dnsrecon -d {domain} -t std 2>/dev/null | head -80",
@@ -482,7 +422,6 @@ def phase_recon():
             "DNS enumeration results",
             evidence={"output": stdout[:1000]})
 
-    # 18. Fierce
     log("Running fierce...")
     stdout, _, _ = run_command(
         f"fierce --domain {domain} 2>/dev/null | head -50",
@@ -494,7 +433,6 @@ def phase_recon():
             "DNS enumeration and zone transfer attempt",
             evidence={"output": stdout[:1000]})
 
-    # 19. TheHarvester
     log("Running theharvester...")
     stdout, _, _ = run_command(
         f"theHarvester -d {domain} -b all -l 100 2>/dev/null | head -80",
@@ -506,7 +444,6 @@ def phase_recon():
             "Emails, hosts, and subdomains discovered",
             evidence={"output": stdout[:2000]})
 
-    # 20. SpiderFoot
     log("Running spiderfoot...")
     stdout, _, _ = run_command(
         f"python3 /opt/spiderfoot/sf.py -s {domain} -q -o json 2>/dev/null | head -100",
@@ -517,7 +454,6 @@ def phase_recon():
             "SpiderFoot OSINT",
             "Comprehensive OSINT scan results",
             evidence={"output": stdout[:2000]})
-
 
 def detect_spa_and_render():
     script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "render_spa.js")
@@ -545,9 +481,6 @@ def detect_spa_and_render():
         if os.path.exists(output_path):
             os.remove(output_path)
 
-
-# ============== PHASE 2: KNOWN VULNERABILITIES ==============
-
 SQLMAP_FINDING_PATTERN = re.compile(
     r"Parameter:\s*(?P<param>.+?)\s*\n"
     r"\s*Type:\s*(?P<type>.+?)\s*\n"
@@ -555,7 +488,6 @@ SQLMAP_FINDING_PATTERN = re.compile(
     r"(?:\s*Payload:\s*(?P<payload>.+?)\s*\n)?",
     re.MULTILINE,
 )
-
 
 def parse_sqlmap_findings(content):
     findings = []
@@ -568,11 +500,9 @@ def parse_sqlmap_findings(content):
         })
     return findings
 
-
 def phase_known_vulns():
     log("Starting known vulnerabilities phase")
 
-    # 21. Nuclei
     log("Running nuclei...")
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         output_file = f.name
@@ -611,7 +541,6 @@ def phase_known_vulns():
         if os.path.exists(output_file):
             os.remove(output_file)
 
-    # 22. Nikto
     log("Running nikto...")
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         nikto_out = f.name
@@ -637,7 +566,6 @@ def phase_known_vulns():
         if os.path.exists(nikto_out):
             os.remove(nikto_out)
 
-    # 23. SQLMap
     log("Running sqlmap...")
     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
         sqlmap_out = f.name
@@ -666,7 +594,6 @@ def phase_known_vulns():
         if os.path.exists(sqlmap_out):
             os.remove(sqlmap_out)
 
-    # 24. Wapiti
     log("Running wapiti...")
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         wapiti_out = f.name
@@ -692,7 +619,6 @@ def phase_known_vulns():
         if os.path.exists(wapiti_out):
             os.remove(wapiti_out)
 
-    # 25. Gobuster
     log("Running gobuster...")
     wordlist_path_gb = write_wordlist_file()
     stdout, _, _ = run_command(
@@ -710,7 +636,6 @@ def phase_known_vulns():
                 "Directory brute-force results",
                 evidence={"paths": paths[:50]})
 
-    # 26. FFuf
     log("Running ffuf...")
     wordlist_path = write_wordlist_file()
     ffuf_json = tempfile.mktemp(suffix="_ffuf.json")
@@ -744,7 +669,6 @@ def phase_known_vulns():
             if os.path.exists(p):
                 os.remove(p)
 
-    # 27. Dirsearch
     log("Running dirsearch...")
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         dirsearch_out = f.name
@@ -767,7 +691,6 @@ def phase_known_vulns():
         if os.path.exists(dirsearch_out):
             os.remove(dirsearch_out)
 
-    # 28. Wfuzz
     log("Running wfuzz...")
     wordlist_path2 = write_wordlist_file()
     stdout, _, _ = run_command(
@@ -788,7 +711,6 @@ def phase_known_vulns():
                 "Fuzzing results",
                 evidence={"output": "\n".join(lines[:50])})
 
-        # 29. Dalfox - إصلاح: التحقق من الأدلة الفعلية قبل التسجيل
     log("Running dalfox...")
     stdout, _, _ = run_command(
         f"dalfox url {TARGET_URL} --silence --no-color --format json 2>/dev/null",
@@ -800,18 +722,15 @@ def phase_known_vulns():
             data = json.loads(stdout)
             items = data if isinstance(data, list) else data.get("results", [])
             for finding in items:
-                # إصلاح: التحقق من وجود أدلة فعلية قبل التسجيل
                 payload = finding.get("payload", "").strip()
                 param = finding.get("param", "").strip()
                 poc_url = (finding.get("poc_url") or finding.get("data", "")).strip()
                 finding_type = finding.get("type", "").strip()
                 
-                # لو مفيش payload أو param أو نوع → مش finding حقيقي
                 if not payload or not param or not finding_type:
                     log(f"Dalfox: تخطي finding بدون أدلة كافية (param={param}, payload_len={len(payload)})", "info")
                     continue
                 
-                # لو الـ payload مش فيه HTML/JS → مش XSS
                 if "<" not in payload and "javascript:" not in payload.lower():
                     log(f"Dalfox: تخطي finding - payload مش XSS: {payload[:50]}", "info")
                     continue
@@ -830,16 +749,13 @@ def phase_known_vulns():
         except json.JSONDecodeError:
             pass
 
-    # fallback: لو الـ JSON parsing فشل، نجرب text parsing مع تحقق من الأدلة
     if not dalfox_parsed and stdout:
-        # نتأكد إن النص فيه دليل حقيقي مش بس كلمة "vulnerable"
         has_real_evidence = (
             "[V]" in stdout or 
             "payload" in stdout.lower() or
             "verified" in stdout.lower()
         )
         if has_real_evidence and "param" in stdout.lower():
-            # استخرج الـ param والـ payload من النص
             param_match = re.search(r"param[:=]\s*(\S+)", stdout, re.IGNORECASE)
             payload_match = re.search(r"payload[:=]\s*(\S+)", stdout, re.IGNORECASE)
             
@@ -853,8 +769,7 @@ def phase_known_vulns():
                         "raw_output": stdout[:1500],
                     },
                     remediation="Sanitize user input and use output encoding")
-                
-    # 30. Retire.js
+
     log("Running retire.js...")
     stdout, _, _ = run_command(
         f"retire --js --url {TARGET_URL} --outputformat json 2>/dev/null",
@@ -871,7 +786,6 @@ def phase_known_vulns():
         except json.JSONDecodeError:
             pass
 
-    # 31. WPScan
     log("Running wpscan...")
     stdout, _, _ = run_command(
         f"wpscan --url {TARGET_URL} --no-update --format json 2>/dev/null | head -100",
@@ -883,7 +797,6 @@ def phase_known_vulns():
             "WordPress vulnerability scan",
             evidence={"output": stdout[:2000]})
 
-    # 32. Skipfish
     log("Running skipfish...")
     stdout, _, _ = run_command(
         f"timeout 60 skipfish -o /tmp/skipfish_out {TARGET_URL} 2>/dev/null | head -30",
@@ -895,7 +808,6 @@ def phase_known_vulns():
             "Web security scan results",
             evidence={"output": stdout[:1000]})
 
-    # 33. Commix
     log("Running commix...")
     stdout, _, _ = run_command(
         f"commix --url='{TARGET_URL}' --batch --level=1 2>/dev/null | head -30",
@@ -908,7 +820,6 @@ def phase_known_vulns():
             evidence={"output": stdout[:2000]},
             remediation="Sanitize all user input and avoid system calls")
 
-    # 34. XSStrike
     log("Running xsstrike...")
     stdout, _, _ = run_command(
         f"timeout 120 python3 /opt/XSStrike/xsstrike.py -u {TARGET_URL} --skip 2>/dev/null | head -30",
@@ -920,14 +831,10 @@ def phase_known_vulns():
             "XSStrike found XSS vulnerability",
             evidence={"output": stdout[:2000]})
 
-
-# ============== PHASE 3: ZERO-DAY / ANOMALY ==============
-
 def phase_zero_day():
     log("Starting zero-day / anomaly phase")
     domain = urlparse(TARGET_URL).netloc
 
-    # 35. Katana sensitive endpoints
     log("Analyzing sensitive endpoints...")
     stdout, _, _ = run_command(
         f"katana -u {TARGET_URL} -silent -d 3 2>/dev/null | head -500",
@@ -952,7 +859,6 @@ def phase_zero_day():
                         remediation="Review if this endpoint should be publicly accessible")
                     break
 
-    # 36. Security Headers Analysis
     log("Checking security headers...")
     stdout, _, _ = run_command(f"curl -sI {TARGET_URL} 2>/dev/null", timeout=30)
     if stdout:
@@ -968,7 +874,6 @@ def phase_zero_day():
                 evidence={"missing": missing, "raw_headers": stdout[:1500]},
                 remediation="Add these headers to server configuration")
 
-    # 37. Cookie Security Analysis
     log("Analyzing cookie security...")
     stdout, _, _ = run_command(
         f"curl -sI {TARGET_URL} 2>/dev/null | grep -i 'set-cookie'",
@@ -991,7 +896,6 @@ def phase_zero_day():
                 evidence={"cookies": cookies, "issues": list(set(insecure_flags))},
                 remediation="Set HttpOnly, Secure, and SameSite flags on cookies")
 
-    # 38. CORS Misconfiguration
     log("Checking CORS...")
     stdout, _, _ = run_command(
         f"curl -sI -H 'Origin: https://evil.com' {TARGET_URL} 2>/dev/null | grep -i 'access-control'",
@@ -1004,7 +908,6 @@ def phase_zero_day():
             evidence={"cors_header": stdout.strip()},
             remediation="Validate Origin header against whitelist")
 
-    # 39. Open Redirect
     log("Checking open redirect...")
     redirect_payloads = ["//evil.com", "https://evil.com", "/\\evil.com"]
     for payload in redirect_payloads:
@@ -1020,7 +923,6 @@ def phase_zero_day():
                 remediation="Validate redirect URLs against whitelist")
             break
 
-    # 40. HTTP Methods Check
     log("Checking HTTP methods...")
     stdout, _, _ = run_command(
         f"curl -sX OPTIONS -i {TARGET_URL} 2>/dev/null | grep -i 'allow'",
@@ -1033,7 +935,6 @@ def phase_zero_day():
             evidence={"methods": stdout.strip()},
             remediation="Disable unnecessary HTTP methods (PUT, DELETE, TRACE)")
 
-    # 41. Directory Traversal
     log("Checking directory traversal...")
     traversal_payloads = ["../../../../etc/passwd", "..%2f..%2f..%2fetc%2fpasswd"]
     for payload in traversal_payloads:
@@ -1049,7 +950,6 @@ def phase_zero_day():
                 remediation="Validate file paths and restrict access to allowed directories")
             break
 
-    # 42. Information Disclosure
     log("Checking information disclosure...")
     SENSITIVE_FILE_SIGNATURES = {
         ".env": [r"[A-Z_]{2,}\s*=", r"DB_", r"API_KEY", r"SECRET", r"PASSWORD"],
@@ -1086,7 +986,6 @@ def phase_zero_day():
                 },
                 remediation=f"احذف الملف فورًا أو امنع الوصول إليه من /{f}")
 
-    # 43. Server Banner Grabbing
     log("Grabbing server banners...")
     stdout, _, _ = run_command(
         f"curl -sI {TARGET_URL} 2>/dev/null | grep -iE 'server|x-powered-by|x-aspnet'",
@@ -1099,7 +998,6 @@ def phase_zero_day():
             evidence={"banners": stdout.strip()},
             remediation="Remove or obscure server version headers")
 
-    # 44. TLS/SSL Configuration Weakness
     log("Checking TLS configuration...")
     weak_protocol_flags = {"TLS 1.0": "-tls1", "TLS 1.1": "-tls1_1"}
     weak_tls_found = []
@@ -1131,7 +1029,6 @@ def phase_zero_day():
             "السيرفر رفض الاتصال ببروتوكولات TLS 1.0/1.1 القديمة",
             evidence={"checked_protocols": list(weak_protocol_flags.keys())})
 
-    # 45. Robots.txt Analysis
     log("Checking robots.txt...")
     stdout, _, _ = run_command(
         f"curl -s {TARGET_URL}/robots.txt 2>/dev/null | head -30",
@@ -1144,7 +1041,6 @@ def phase_zero_day():
             evidence={"content": stdout[:1000]},
             remediation="Review if sensitive paths are listed in robots.txt")
 
-    # 46. Sitemap.xml Analysis
     log("Checking sitemap.xml...")
     stdout, _, _ = run_command(
         f"curl -s {TARGET_URL}/sitemap.xml 2>/dev/null | head -30",
@@ -1156,7 +1052,6 @@ def phase_zero_day():
             "URLs discovered from sitemap.xml",
             evidence={"content": stdout[:1000]})
 
-    # 47. HTTP/2 Support Check
     log("Checking HTTP/2...")
     stdout, _, _ = run_command(
         f"curl -sI --http2 {TARGET_URL} 2>/dev/null | head -1",
@@ -1168,7 +1063,6 @@ def phase_zero_day():
             f"Server response: {stdout.strip()}",
             evidence={"protocol": "HTTP/2"})
 
-    # 48. HTTP/3 (QUIC) Support Check
     log("Checking HTTP/3...")
     stdout, _, _ = run_command(
         f"curl -sI --http3 {TARGET_URL} 2>/dev/null | head -1",
@@ -1180,7 +1074,6 @@ def phase_zero_day():
             f"Server response: {stdout.strip()}",
             evidence={"protocol": "HTTP/3"})
 
-    # 49. Certificate Expiry Check
     log("Checking certificate expiry...")
     stdout, _, _ = run_command(
         f"echo | openssl s_client -connect {domain}:443 -servername {domain} 2>/dev/null | "
@@ -1193,7 +1086,6 @@ def phase_zero_day():
             "Certificate information",
             evidence={"output": stdout[:500]})
 
-    # 50. Rate Limiting Check
     log("Checking rate limiting...")
     stdout, _, _ = run_command(
         f"for i in $(seq 1 20); do curl -s -o /dev/null -w '%{{http_code}}\\n' {TARGET_URL} 2>/dev/null; done | sort | uniq -c",
@@ -1207,27 +1099,26 @@ def phase_zero_day():
             evidence={"codes": codes},
             remediation="Implement rate limiting to prevent abuse")
 
-
-# ============== MAIN ==============
-
 def main():
     log(f"Starting scan for {TARGET_URL}")
 
     try:
-        supabase.table("scans").update({
-            "status": "running",
-            "started_at": datetime.utcnow().isoformat(),
-        }).eq("id", SCAN_ID).execute()
+        if supabase:
+            supabase.table("scans").update({
+                "status": "running",
+                "started_at": datetime.utcnow().isoformat(),
+            }).eq("id", SCAN_ID).execute()
 
         alive, alive_info = check_target_alive()
         if not alive:
             error_msg = f"❌ تم إيقاف الفحص: {alive_info['reason']}"
             log(error_msg, "critical")
-            supabase.table("scans").update({
-                "status": "failed",
-                "error_message": error_msg,
-                "completed_at": datetime.utcnow().isoformat(),
-            }).eq("id", SCAN_ID).execute()
+            if supabase:
+                supabase.table("scans").update({
+                    "status": "failed",
+                    "error_message": error_msg,
+                    "completed_at": datetime.utcnow().isoformat(),
+                }).eq("id", SCAN_ID).execute()
             return
 
         log(f"✅ الموقع شغال (HTTP {alive_info['status_code']}) - بدء الفحص", "success")
@@ -1237,12 +1128,12 @@ def main():
         phase_recon()
         phase_known_vulns()
         phase_zero_day()
-        
-        # تنفيذ وظائف السحب المتقدمة الخاصة بالمشروع العلمي
         phase_advanced_exploitation()
 
-        results = supabase.table("results").select("severity").eq("scan_id", SCAN_ID).execute()
-        results_data = results.data or []
+        results_data = []
+        if supabase:
+            results = supabase.table("results").select("severity").eq("scan_id", SCAN_ID).execute()
+            results_data = results.data or []
 
         counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
         for r in results_data:
@@ -1250,15 +1141,16 @@ def main():
             if sev in counts:
                 counts[sev] += 1
 
-        supabase.table("scans").update({
-            "status": "completed",
-            "completed_at": datetime.utcnow().isoformat(),
-            "total_findings": len(results_data),
-            "critical_count": counts["critical"],
-            "high_count": counts["high"],
-            "medium_count": counts["medium"],
-            "low_count": counts["low"],
-        }).eq("id", SCAN_ID).execute()
+        if supabase:
+            supabase.table("scans").update({
+                "status": "completed",
+                "completed_at": datetime.utcnow().isoformat(),
+                "total_findings": len(results_data),
+                "critical_count": counts["critical"],
+                "high_count": counts["high"],
+                "medium_count": counts["medium"],
+                "low_count": counts["low"],
+            }).eq("id", SCAN_ID).execute()
 
         log(f"Scan completed. Total findings: {len(results_data)}", "success")
 
@@ -1271,12 +1163,12 @@ def main():
 
     except Exception as e:
         log(f"Scan failed: {str(e)}", "error")
-        supabase.table("scans").update({
-            "status": "failed",
-            "error_message": str(e),
-        }).eq("id", SCAN_ID).execute()
+        if supabase:
+            supabase.table("scans").update({
+                "status": "failed",
+                "error_message": str(e),
+            }).eq("id", SCAN_ID).execute()
         raise
-
 
 if __name__ == "__main__":
     main()
