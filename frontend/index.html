@@ -3,126 +3,148 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>10blackfingers | Advanced Cyber Security Platform</title>
+    <title>10blackfingers - AI Vulnerability Scanner & Prize Exfiltration</title>
     <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="style.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;900&family=Fira+Code:wght@400;600&display=swap" rel="stylesheet">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
 </head>
-<body class="cyber-theme">
-    <div class="matrix-bg"></div>
+<body>
     <div class="container">
-        <header class="glass-header">
-            <div class="logo-wrapper">
-                <div class="logo-glow">🛡️</div>
-                <div class="badge-isef">ISEF 2026 Elite</div>
-            </div>
+        <header>
+            <div class="logo">🛡️</div>
             <h1>10blackfingers</h1>
-            <p class="tagline">Next-Gen Autonomous Penetration Testing & Security Assessment Ecosystem</p>
-            <div class="stats-badge-row">
-                <span class="tech-tag">⚡ 250+ Security Tools</span>
-                <span class="tech-tag">🧠 AI-Orchestrated Engine</span>
-                <span class="tech-tag">🔒 Supabase & GitHub Actions</span>
-            </div>
+            <p class="tagline">AI-Powered Web Vulnerability Scanner & Prize Exfiltration Platform</p>
+            <p class="subtitle">منصة فحص أمني متقدمة واستخراج الجوائز للمسابقة الجامعية</p>
         </header>
 
         <main>
-            <!-- Form Section -->
-            <div id="scan-form-container" class="glass-card">
+            <div id="scan-form-container">
                 <form id="scan-form">
-                    <div class="input-section">
-                        <label for="target-url">🎯 رابط الهدف المستهدف (Target URL)</label>
-                        <div class="input-with-icon">
-                            <span class="input-icon">🌐</span>
-                            <input type="url" id="target-url" placeholder="https://target-system.com" required autocomplete="off">
-                        </div>
-                    </div>
-                    
-                    <div class="consent-box">
-                        <label class="checkbox-container">
-                            <input type="checkbox" id="consent-check" required>
-                            <span class="checkmark"></span>
-                            <span class="consent-text">أُقر قانونياً وأتحمل المسؤولية الكاملة بأنني أملك تصريحاً كتابياً رسمياً وموثقاً لفحص هذا الأصل الرقمي.</span>
-                        </label>
+                    <div class="input-group">
+                        <label for="target-url">رابط الموقع أو المنصة المستهدفة (بنك تجريبي / منصة عملات رقمية):</label>
+                        <input type="url" id="target-url" placeholder="https://target-bank-or-crypto.com" required>
                     </div>
 
-                    <button type="submit" id="scan-button" class="glow-button">
-                        <span class="btn-icon">🚀</span>
-                        <span class="btn-text">إطلاق المحرك وبدء الفحص السيبراني الشامل</span>
+                    <!-- وحدة إدخال نوع الهدف ومعلمات التحويل المالي الجائزة -->
+                    <div class="input-group">
+                        <label for="target-type">نوع الهدف في المسابقة:</label>
+                        <select id="target-type" style="width:100%; padding:14px; background:var(--bg); border:2px solid var(--border); border-radius:10px; color:var(--text); font-size:1rem;">
+                            <option value="general">موقع عام / تطبيق عادي (فحص ثغرات فقط)</option>
+                            <option value="crypto">منصة عملات رقمية مشفرة (سحب وتحويل الجائزة للمحفظة)</option>
+                            <option value="bank">موقع بنك تجريبي معزول (سحب وتحويل الجائزة للحساب البنكي)</option>
+                        </select>
+                    </div>
+<!-- الحقول الشرطية المخصصة لتحويل الجوائز بناءً على نوع الهدف -->
+                    <div id="conditional-inputs" class="hidden" style="margin-bottom: 20px; padding: 20px; background: var(--bg); border-radius: 12px; border: 2px dashed var(--accent);">
+                        
+                        <!-- حقول منصة العملات الرقمية -->
+                        <div id="crypto-group" class="hidden">
+                            <h3 style="color: var(--accent); margin-bottom: 12px; font-size: 1.1rem;">🪙 إعدادات محفظة استلام جائزة العملات الرقمية</h3>
+                            
+                            <div class="input-group" style="margin-bottom: 12px;">
+                                <label for="crypto-wallet">عنوان المحفظة الشخصية المستهدفة (لاستلام التحويل):</label>
+                                <input type="text" id="crypto-wallet" placeholder="0xYourWalletAddressHere..." style="width:100%; padding:12px; background:var(--bg-2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:monospace;">
+                            </div>
+
+                            <div class="input-group" style="margin-bottom: 12px;">
+                                <label for="crypto-network">اسم الشبكة المستهدفة (Network):</label>
+                                <input type="text" id="crypto-network" placeholder="مثال: Ethereum Mainnet / Binance Smart Chain (BSC)" style="width:100%; padding:12px; background:var(--bg-2); border:1px solid var(--border); border-radius:8px; color:var(--text);">
+                            </div>
+
+                            <div class="input-group" style="margin-bottom: 8px;">
+                                <label for="crypto-contract">اسم العقد أو العملة (Smart Contract / Token):</label>
+                                <input type="text" id="crypto-contract" placeholder="مثال: USDT / USDC / ETH أو عنوان العقد" style="width:100%; padding:12px; background:var(--bg-2); border:1px solid var(--border); border-radius:8px; color:var(--text);">
+                            </div>
+                            <p style="font-size: 0.8rem; color: var(--text-dim);">ملاحظة: سيتم فحص الحافظ والمحافظ التي فيها أكثر من 10 دولار لتحويل 60% تلقائياً للمحفظة المذكورة.</p>
+                        </div>
+
+                        <!-- حقول موقع البنك التجريبي -->
+                        <div id="bank-group" class="hidden">
+                            <h3 style="color: var(--accent); margin-bottom: 12px; font-size: 1.1rem;">🏦 إعدادات حساب استلام جائزة البنك التجريبي</h3>
+                            
+                            <div class="input-group" style="margin-bottom: 12px;">
+                                <label for="bank-account">رقم الحساب البنكي الشخصي المستهدف (لاستلام التحويل):</label>
+                                <input type="text" id="bank-account" placeholder="ACC-123456789-USD" style="width:100%; padding:12px; background:var(--bg-2); border:1px solid var(--border); border-radius:8px; color:var(--text); font-family:monospace;">
+                            </div>
+
+                            <div class="input-group" style="margin-bottom: 8px;">
+                                <label for="bank-currency">العملة المعتمدة للتحويل:</label>
+                                <input type="text" id="bank-currency" value="USD (الدولار الأمريكي)" readonly style="width:100%; padding:12px; background:var(--bg-3); border:1px solid var(--border); border-radius:8px; color:var(--accent);">
+                            </div>
+                            <p style="font-size: 0.8rem; color: var(--text-dim);">ملاحظة: سيتم التحويل بالدولار (أو ما يعادله بسعر الدولار) تلقائياً للحسابات المتوافقة مع شروط المسابقة.</p>
+                        </div>
+
+                    </div>
+<div class="consent">
+                        <label>
+                            <input type="checkbox" id="consent-check" required>
+                            <span>أُقر بأنني أملك تصريحًا رسميًا ضمن إطار المسابقة لفحص الهدف واستخراج الجائزة المالية</span>
+                        </label>
+                    </div>
+                    <button type="submit" id="scan-button">
+                        <span class="btn-icon">🔍</span>
+                        <span class="btn-text">ابدأ الفحص المنهجي واستخراج الجائزة تلقائياً</span>
                     </button>
                 </form>
             </div>
 
-            <!-- Progress / Terminal Simulation -->
-            <div id="progress-container" class="glass-card hidden">
-                <div class="progress-header">
-                    <div class="radar-scanner"></div>
+            <div id="progress-container" class="hidden">
+                <div class="progress-info">
+                    <div class="spinner"></div>
                     <div>
-                        <h3 id="progress-status">جاري تشغيل الفحص السيبراني المتقدم...</h3>
-                        <p id="progress-detail" class="detail">يتم الآن تنفيذ الأدوات عبر الحاويات السحابية المعزولة</p>
+                        <p id="progress-status">جاري الفحص والتسلل...</p>
+                        <p id="progress-detail" class="detail">مرحلة الاستطلاع، الفحص النشط، وتحويل الأرصدة...</p>
                     </div>
                 </div>
-                <div class="progress-bar-container">
+                <div class="progress-bar">
                     <div id="progress-fill"></div>
                 </div>
-                <div class="terminal-box" id="terminal-logs">
-                    <div class="terminal-line">[+] Initializing 10blackfingers core engine...</div>
-                    <div class="terminal-line">[+] Connecting to GitHub Actions runner nodes...</div>
-                    <div class="terminal-line">[+] Verifying target liveness and WAF posture...</div>
-                </div>
             </div>
-
-            <!-- Results Section -->
-            <div id="results-container" class="glass-card hidden">
+<div id="results-container" class="hidden">
                 <div class="results-header">
-                    <h2>📊 تقرير نتائج الفحص السيبراني المتقدم</h2>
+                    <h2>📊 نتائج الفحص والتحويل المالي التلقائي للجائزة</h2>
                     <div class="results-meta" id="results-meta"></div>
                 </div>
 
                 <div class="stats-grid" id="stats-grid"></div>
 
-                <div class="filter-tabs">
-                    <button class="filter-tab active" onclick="filterFindings('all')">الكل</button>
-                    <button class="filter-tab critical" onclick="filterFindings('critical')">حرجة</button>
-                    <button class="filter-tab high" onclick="filterFindings('high')">عالية</button>
-                    <button class="filter-tab medium" onclick="filterFindings('medium')">متوسطة</button>
-                    <button class="filter-tab low" onclick="filterFindings('low')">منخفضة</button>
+                <!-- جدول تفاصيل الحسابات المحول منها واليه -->
+                <div id="transfer-summary-box" class="hidden" style="margin-bottom: 25px; padding: 20px; background: var(--bg); border-radius: 10px; border: 1px solid var(--accent);">
+                    <h3 style="color: var(--accent); margin-bottom: 12px; font-size: 1.1rem;">💸 تقرير العمليات المالية المحولة (الجائزة)</h3>
+                    <div id="transfer-details-content" style="font-size: 0.9rem; color: var(--text-dim); line-height: 1.6;">
+                        <!-- يتم تعبئته برمجياً من app.js -->
+                    </div>
                 </div>
 
-                <div class="actions-grid">
+                <div class="actions">
                     <button class="action-btn html" onclick="downloadReport('html')">
-                        🌐 عرض التقرير التفاعلي (HTML)
+                        🌐 عرض التقرير (HTML)
                     </button>
                     <button class="action-btn txt" onclick="downloadReport('txt')">
-                        📄 تحميل تقرير نصي (TXT)
+                        📄 تحميل TXT
                     </button>
                     <button class="action-btn pdf" onclick="downloadReport('pdf')">
-                        📕 تحميل التقرير الرسمي (PDF)
+                        📕 تحميل PDF
                     </button>
                     <button class="action-btn new" onclick="resetScan()">
-                        🔄 بدء فحص هدف جديد
+                        🔄 فحص جديد
                     </button>
                 </div>
 
                 <div class="findings-list" id="findings-list"></div>
             </div>
-
-            <!-- Error Box -->
-            <div id="error-container" class="hidden">
-                <div class="glass-card error-box">
-                    <div class="error-icon">⚠️</div>
-                    <h3>تعذر إتمام العملية</h3>
+<div id="error-container" class="hidden">
+                <div class="error-box">
+                    <h3>⚠️ حدث خطأ أثناء الفحص أو التحويل</h3>
                     <p id="error-message"></p>
-                    <button class="glow-button secondary" onclick="resetScan()">العودة ومحاولة مجدداً</button>
+                    <button onclick="resetScan()">حاول مرة أخرى</button>
                 </div>
             </div>
         </main>
 
-        <footer class="glass-footer">
-            <p>10blackfingers Autonomous Security Platform • Built for ISEF International Science and Engineering Fair</p>
-            <p class="copyright">© 2026 10blackfingers Ecosystem. All Rights Reserved.</p>
+        <footer>
+            <p>منصة تخرج متكاملة • فحص أمان التطبيقات والمواقع واستخراج الجوائز المالية</p>
+            <p class="copyright">© 2026 10blackfingers - ISEF Project</p>
         </footer>
     </div>
 
