@@ -1,3 +1,4 @@
+
 name: Security Scan
 
 on:
@@ -16,271 +17,188 @@ permissions:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 360
+    timeout-minutes: 180
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
-        continue-on-error: true
 
-      - name: Setup Python 3.11
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-        continue-on-error: true
 
-      - name: Setup Node.js 20
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-        continue-on-error: true
 
-      - name: Install Puppeteer for SPA Rendering
-        run: |
-          npm install puppeteer --prefix "$HOME/puppeteer-env" --silent 2>/dev/null || true
-          mkdir -p backend/github_actions/node_modules
-          cp -r "$HOME/puppeteer-env/node_modules" backend/github_actions/ 2>/dev/null || true
-        continue-on-error: true
-
-      - name: Install APT Network Scanning Tools
+      - name: Install system tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            nmap masscan rustscan unicornscan naabu zmap hping3 \
-            netcat-traditional ncat socat proxychains4 dnsutils whois \
-            dnsrecon fierce dnsenum dnstracer dnsmap tcpdump tshark \
-            tcpflow tcpreplay tcpslice iftop iptraf-ng nethogs bmon \
-            vnstat mtr traceroute iputils-tracepath arping arpspoof \
-            macchanger ettercap-text-only bettercap responder || true
+          sudo apt-get install -y -qq nmap whatweb nikto jq dnsutils whois openssl curl wget git unzip ca-certificates
+          sudo apt-get install -y -qq gobuster ffuf dirsearch wfuzz sqlmap wapiti
+          sudo apt-get install -y -qq skipfish dnsrecon fierce hydra commix
         continue-on-error: true
 
-      - name: Install APT Web Vulnerability Tools
+      - name: Install Python tools
         run: |
-          sudo apt-get install -y -qq \
-            nikto whatweb wpscan joomscan droopescan wapiti skipfish \
-            sqlmap commix xsser wfuzz ffuf gobuster dirb dirsearch \
-            feroxbuster dirbuster nuclei sslscan sslyze \
-            testssl.sh tlssled wafw00f cmseek blindelephant || true
+          pip install --quiet --upgrade pip
+          pip install --quiet supabase httpx requests
+          pip install --quiet wafw00f
+          pip install --quiet sslyze
+          pip install --quiet theHarvester
+          pip install --quiet openpyxl
+          pip install --quiet reportlab arabic-reshaper python-bidi
         continue-on-error: true
 
-      - name: Install APT Password Cracking Tools
+      - name: Install Puppeteer
         run: |
-          sudo apt-get install -y -qq \
-            hydra medusa ncrack patator crowbar john hashcat \
-            hash-identifier ophcrack crunch cewl cupp seclists wordlists \
-            rsmasher brutespray hydra-gtk || true
+          mkdir -p backend/github_actions
+          cd backend/github_actions
+          if [ ! -f package.json ]; then
+            echo '{"name":"scanner-deps","version":"1.0.0","private":true}' > package.json
+          fi
+          npm install puppeteer --silent 2>/dev/null || true
         continue-on-error: true
 
-      - name: Install APT SMB, AD and LDAP Tools
+      - name: Install ProjectDiscovery tools
         run: |
-          sudo apt-get install -y -qq \
-            smbclient smbmap enum4linux enum4linux-ng nbtscan rpcclient \
-            ldap-utils ldapdomaindump crackmapexec netexec impacket-scripts \
-            bloodhound.py mitm6 kerbrute adidnsdump || true
+          mkdir -p "$HOME/tools"
+          cd "$HOME/tools"
+          wget -q https://github.com/projectdiscovery/subfinder/releases/download/v2.6.6/subfinder_2.6.6_linux_amd64.zip || true
+          unzip -q subfinder_2.6.6_linux_amd64.zip 2>/dev/null || true
+          sudo mv subfinder /usr/local/bin/ 2>/dev/null || true
+          wget -q https://github.com/projectdiscovery/nuclei/releases/download/v3.3.5/nuclei_3.3.5_linux_amd64.zip || true
+          unzip -q nuclei_3.3.5_linux_amd64.zip 2>/dev/null || true
+          sudo mv nuclei /usr/local/bin/ 2>/dev/null || true
+          wget -q https://github.com/projectdiscovery/httpx/releases/download/v1.6.9/httpx_1.6.9_linux_amd64.zip || true
+          unzip -q httpx_1.6.9_linux_amd64.zip 2>/dev/null || true
+          sudo mv httpx /usr/local/bin/ 2>/dev/null || true
+          wget -q https://github.com/projectdiscovery/katana/releases/download/v1.1.2/katana_1.1.2_linux_amd64.zip || true
+          unzip -q katana_1.1.2_linux_amd64.zip 2>/dev/null || true
+          sudo mv katana /usr/local/bin/ 2>/dev/null || true
+          wget -q https://github.com/projectdiscovery/naabu/releases/download/v2.3.1/naabu_2.3.1_linux_amd64.zip || true
+          unzip -q naabu_2.3.1_linux_amd64.zip 2>/dev/null || true
+          sudo mv naabu /usr/local/bin/ 2>/dev/null || true
+          wget -q https://github.com/projectdiscovery/dnsx/releases/download/v1.2.1/dnsx_1.2.1_linux_amd64.zip || true
+          unzip -q dnsx_1.2.1_linux_amd64.zip 2>/dev/null || true
+          sudo mv dnsx /usr/local/bin/ 2>/dev/null || true
+          wget -q https://github.com/projectdiscovery/tlsx/releases/download/v1.1.6/tlsx_1.1.6_linux_amd64.zip || true
+          unzip -q tlsx_1.1.6_linux_amd64.zip 2>/dev/null || true
+          sudo mv tlsx /usr/local/bin/ 2>/dev/null || true
         continue-on-error: true
 
-      - name: Install APT Exploitation Tools
+      - name: Install Dalfox
         run: |
-          sudo apt-get install -y -qq \
-            metasploit-framework exploitdb searchsploit msfpc beef-xss \
-            set veil shellter thefatrat routersploit linux-exploit-suggester \
-            windows-exploit-suggester sherlock dirtycow || true
+          wget -q https://github.com/hahwul/dalfox/releases/download/v2.9.2/dalfox_2.9.2_linux_amd64.tar.gz || true
+          tar -xzf dalfox_2.9.2_linux_amd64.tar.gz 2>/dev/null || true
+          sudo mv dalfox /usr/local/bin/ 2>/dev/null || true
         continue-on-error: true
 
-      - name: Install APT Packet Analysis Tools
+      - name: Install Retire.js
         run: |
-          sudo apt-get install -y -qq \
-            wireshark mitmproxy tcpick ngrep dsniff urlsnarf driftnet || true
+          sudo npm install -g retire --silent 2>/dev/null || true
         continue-on-error: true
 
-      - name: Install APT Wireless Network Tools
+      - name: Install GAU
         run: |
-          sudo apt-get install -y -qq \
-            aircrack-ng airgeddon reaver bully pixiewps wifite \
-            kismet mdk4 hostapd-wpe cowpatty fern-wifi-cracker || true
+          wget -q https://github.com/lc/gau/releases/download/v2.2.3/gau_2.2.3_linux_amd64.tar.gz || true
+          tar -xzf gau_2.2.3_linux_amd64.tar.gz 2>/dev/null || true
+          sudo mv gau /usr/local/bin/ 2>/dev/null || true
         continue-on-error: true
 
-      - name: Install APT Sniffing Tools
+      - name: Install Waybackurls
         run: |
-          sudo apt-get install -y -qq \
-            ettercap sslstrip sslsplit || true
+          wget -q https://github.com/tomnomnom/waybackurls/releases/download/v0.1.0/waybackurls-linux-amd64-0.1.0.tgz || true
+          tar -xzf waybackurls-linux-amd64-0.1.0.tgz 2>/dev/null || true
+          sudo mv waybackurls /usr/local/bin/ 2>/dev/null || true
         continue-on-error: true
 
-      - name: Install APT Development Libraries
+      - name: Install Gitleaks
         run: |
-          sudo apt-get install -y -qq \
-            build-essential gcc g++ make cmake autoconf automake \
-            libtool pkg-config bison flex libssl-dev libffi-dev \
-            python3-dev python3-pip python3-venv libxml2-dev libxslt1-dev \
-            zlib1g-dev libpq-dev libpcap-dev libcurl4-openssl-dev \
-            libjansson-dev libgcrypt20-dev liblz4-dev libsqlite3-dev \
-            libpcre3-dev libreadline-dev libncurses-dev libgmp-dev \
-            libbz2-dev liblzma-dev libzstd-dev libkrb5-dev libsasl2-dev \
-            libldap2-dev libgssapi-krb5-2 libmagic-dev libgeoip-dev || true
+          wget -q https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz || true
+          tar -xzf gitleaks_8.18.4_linux_x64.tar.gz gitleaks 2>/dev/null || true
+          sudo mv gitleaks /usr/local/bin/ 2>/dev/null || true
         continue-on-error: true
 
-      - name: Install APT Programming Languages and Utilities
+      - name: Install XSStrike
         run: |
-          sudo apt-get install -y -qq \
-            golang-go default-jdk openjdk-17-jdk ruby ruby-dev php \
-            php-cli perl python3 git curl wget unzip zip tar gzip \
-            bzip2 xz-utils p7zip-full jq yq sed gawk grep findutils \
-            coreutils file less vim nano tmux screen htop tree || true
+          git clone --quiet --depth=1 https://github.com/s0md3v/XSStrike.git /opt/XSStrike 2>/dev/null || true
+          if [ -f /opt/XSStrike/requirements.txt ]; then
+            pip install --quiet -r /opt/XSStrike/requirements.txt 2>/dev/null || true
+          fi
         continue-on-error: true
 
-      - name: Install APT Database Tools
+      - name: Install SpiderFoot
         run: |
-          sudo apt-get install -y -qq \
-            sqlite3 postgresql-client mysql-client redis-tools mongodb-clients || true
+          git clone --quiet --depth=1 https://github.com/smicallef/spiderfoot.git /opt/spiderfoot 2>/dev/null || true
+          if [ -f /opt/spiderfoot/requirements.txt ]; then
+            cd /opt/spiderfoot && pip install --quiet -r requirements.txt 2>/dev/null || true
+          fi
         continue-on-error: true
 
-      - name: Install APT Cloud and Container Tools
+      - name: Install OWASP ZAP
         run: |
-          sudo apt-get install -y -qq \
-            docker.io docker-compose kubectl helm awscli azure-cli \
-            gcloud terraform ansible trivy grype kube-bench kube-hunter || true
+          sudo apt-get install -y -qq openjdk-17-jre-headless 2>/dev/null || true
+          cd /tmp
+          wget -q https://github.com/zaproxy/zaproxy/releases/download/v2.15.0/ZAP_2.15.0_Linux.tar.gz || true
+          if [ -f ZAP_2.15.0_Linux.tar.gz ]; then
+            tar -xzf ZAP_2.15.0_Linux.tar.gz 2>/dev/null || true
+            sudo rm -rf /opt/zap 2>/dev/null || true
+            sudo mv ZAP_2.15.0 /opt/zap 2>/dev/null || true
+            sudo chmod +x /opt/zap/zap.sh 2>/dev/null || true
+            sudo chmod +x /opt/zap/zap-baseline.py 2>/dev/null || true
+            sudo chmod +x /opt/zap/zap-full-scan.py 2>/dev/null || true
+            sudo chmod +x /opt/zap/zap-api-scan.py 2>/dev/null || true
+            sudo ln -sf /opt/zap/zap.sh /usr/local/bin/zap.sh 2>/dev/null || true
+            sudo ln -sf /opt/zap/zap-baseline.py /usr/local/bin/zap-baseline.py 2>/dev/null || true
+            sudo ln -sf /opt/zap/zap-full-scan.py /usr/local/bin/zap-full-scan.py 2>/dev/null || true
+            sudo ln -sf /opt/zap/zap-api-scan.py /usr/local/bin/zap-api-scan.py 2>/dev/null || true
+          fi
         continue-on-error: true
 
-      - name: Install Python Security and Network Libraries (Pip)
+      - name: Install Additional Python Tools
         run: |
-          pip install --quiet \
-            wafw00f sslyze theHarvester impacket ldap3 pycryptodome \
-            PyJWT scapy paramiko psycopg2-binary sqlparse cryptography \
-            bcrypt pynacl rsa pyopenssl pycryptodomex \
-            python-nmap python-libnmap requests httpx aiohttp urllib3 \
-            beautifulsoup4 lxml html5lib dnspython netaddr tldextract \
-            validators macaddress ipaddress ipwhois shodan censys \
-            virustotal-python pymisp yara-python pefile capstone \
-            keystone-engine unicorn ropper pwntools angr z3-solver \
-            requests-toolbelt socket.io-client websocket-client websockets \
-            fabric ansible-runner docker kubernetes boto3 \
-            google-cloud-storage azure-identity msrest msal oauthlib \
-            requests-oauthlib authlib flask fastapi uvicorn gunicorn \
-            celery redis pymongo sqlalchemy alembic pydantic attrs \
-            dataclasses-json marshmallow cerberus jsonschema || true
+          pip install --quiet paramspider 2>/dev/null || true
+          pip install --quiet arjun 2>/dev/null || true
+          pip install --quiet trufflehog 2>/dev/null || true
         continue-on-error: true
 
-      - name: Install Python Code Auditing Libraries (Pip)
+      - name: Update Nuclei Templates
         run: |
-          pip install --quiet \
-            bandit safety pip-audit semgrep pyre-check mypy pylint \
-            flake8 black isort autopep8 yapf prospector vulture \
-            radon mccabe pyflakes pycodestyle pydocstyle || true
+          nuclei -update-templates -silent 2>/dev/null || true
+          nuclei -update -silent 2>/dev/null || true
         continue-on-error: true
 
-      - name: Install Python Utility and UI Libraries (Pip)
+      - name: Verify tools
         run: |
-          pip install --quiet \
-            pytest pytest-cov tox nox coverage hypothesis mock \
-            faker factory-boy responses vcrpy freezegun time-machine \
-            rich typer click colorama pygments halo loguru tqdm \
-            prompt-toolkit questionary inquirer tabulate prettytable \
-            termcolor blessed asciimatics art pyfiglet || true
-        continue-on-error: true
+          echo "=== Tool Verification ==="
+          for tool in nmap whatweb nikto subfinder nuclei httpx katana naabu dnsx tlsx gobuster ffuf dirsearch wfuzz sqlmap wapiti dalfox gau waybackurls wafw00f sslyze node whois dig gitleaks; do
+            if command -v $tool >/dev/null 2>&1; then
+              echo "OK: $tool"
+            else
+              echo "MISSING: $tool"
+            fi
+          done
+          if command -v zap-baseline.py >/dev/null 2>&1; then
+            echo "OK: zap-baseline.py"
+          else
+            echo "MISSING: zap-baseline.py"
+          fi
+          if [ -d "backend/github_actions/node_modules/puppeteer" ]; then
+            echo "OK: puppeteer"
+          else
+            echo "MISSING: puppeteer"
+          fi
 
-      - name: Install Python Data Science Libraries (Pip)
-        run: |
-          pip install --quiet \
-            numpy pandas scipy matplotlib seaborn plotly bokeh \
-            scikit-learn tensorflow torch keras xgboost lightgbm || true
-        continue-on-error: true
-
-      - name: Install Python Network and Proxy Libraries (Pip)
-        run: |
-          pip install --quiet \
-            mitmproxy requests-html selenium playwright \
-            pyppeteer splinter mechanicalsoup robobrowser cloudscraper \
-            httpcore h11 h2 hyper wsproto trio anyio sniffio \
-            asyncio-mqtt paho-mqtt aiomqtt zeroconf netifaces \
-            psutil pyroute2 wakeonlan pywol || true
-        continue-on-error: true
-
-      - name: Install Global Node.js Tools (NPM)
-        run: |
-          sudo npm install -g \
-            retire nsp snyk david npm-check-updates jshint eslint \
-            tslint standard prettier stylelint webpack parcel rollup \
-            esbuild vite gulp grunt bower yarn pnpm nodemon pm2 \
-            concurrently cross-env dotenv husky lint-staged commitlint \
-            semantic-release standard-version np release-it || true
-        continue-on-error: true
-
-      - name: Install ProjectDiscovery Tools
-        run: |
-          mkdir -p $HOME/tools
-          cd $HOME/tools
-          
-          wget -q https://github.com/projectdiscovery/subfinder/releases/download/v2.6.6/subfinder_2.6.6_linux_amd64.zip && unzip -q subfinder_2.6.6_linux_amd64.zip && sudo mv subfinder /usr/local/bin/ || true
-          wget -q https://github.com/projectdiscovery/httpx/releases/download/v1.6.9/httpx_1.6.9_linux_amd64.zip && unzip -q httpx_1.6.9_linux_amd64.zip && sudo mv httpx /usr/local/bin/ || true
-          wget -q https://github.com/projectdiscovery/katana/releases/download/v1.1.2/katana_1.1.2_linux_amd64.zip && unzip -q katana_1.1.2_linux_amd64.zip && sudo mv katana /usr/local/bin/ || true
-          wget -q https://github.com/projectdiscovery/shuffledns/releases/download/v1.1.0/shuffledns_1.1.0_linux_amd64.zip && unzip -q shuffledns_1.1.0_linux_amd64.zip && sudo mv shuffledns /usr/local/bin/ || true
-          wget -q https://github.com/projectdiscovery/notify/releases/download/v1.0.6/notify_1.0.6_linux_amd64.zip && unzip -q notify_1.0.6_linux_amd64.zip && sudo mv notify /usr/local/bin/ || true
-          wget -q https://github.com/projectdiscovery/interactsh/releases/download/v1.2.0/interactsh-client_1.2.0_linux_amd64.zip && unzip -q interactsh-client_1.2.0_linux_amd64.zip && sudo mv interactsh-client /usr/local/bin/ || true
-          wget -q https://github.com/projectdiscovery/cloudlist/releases/download/v1.0.7/cloudlist_1.0.7_linux_amd64.zip && unzip -q cloudlist_1.0.7_linux_amd64.zip && sudo mv cloudlist /usr/local/bin/ || true
-          wget -q https://github.com/projectdiscovery/mapcidr/releases/download/v1.1.3/mapcidr_1.1.3_linux_amd64.zip && unzip -q mapcidr_1.1.3_linux_amd64.zip && sudo mv mapcidr /usr/local/bin/ || true
-          wget -q https://github.com/projectdiscovery/asnmap/releases/download/v1.1.0/asnmap_1.1.0_linux_amd64.zip && unzip -q asnmap_1.1.0_linux_amd64.zip && sudo mv asnmap /usr/local/bin/ || true
-          wget -q https://github.com/projectdiscovery/uncover/releases/download/v1.0.7/uncover_1.0.7_linux_amd64.zip && unzip -q uncover_1.0.7_linux_amd64.zip && sudo mv uncover /usr/local/bin/ || true
-          wget -q https://github.com/projectdiscovery/alterx/releases/download/v0.1.0/alterx_0.1.0_linux_amd64.zip && unzip -q alterx_0.1.0_linux_amd64.zip && sudo mv alterx /usr/local/bin/ || true
-          wget -q https://github.com/projectdiscovery/cdncheck/releases/download/v1.1.0/cdncheck_1.1.0_linux_amd64.zip && unzip -q cdncheck_1.1.0_linux_amd64.zip && sudo mv cdncheck /usr/local/bin/ || true
-          wget -q https://github.com/projectdiscovery/chaos-client/releases/download/v0.5.2/chaos-client_0.5.2_linux_amd64.zip && unzip -q chaos-client_0.5.2_linux_amd64.zip && sudo mv chaos-client /usr/local/bin/ || true
-          wget -q https://github.com/projectdiscovery/proxify/releases/download/v0.1.2/proxify_0.1.2_linux_amd64.zip && unzip -q proxify_0.1.2_linux_amd64.zip && sudo mv proxify /usr/local/bin/ || true
-          wget -q https://github.com/projectdiscovery/urlfinder/releases/download/v0.0.3/urlfinder_0.0.3_linux_amd64.zip && unzip -q urlfinder_0.0.3_linux_amd64.zip && sudo mv urlfinder /usr/local/bin/ || true
-        continue-on-error: true
-
-      - name: Install Advanced Go and Standalone Tools
-        run: |
-          cd $HOME/tools
-          wget -q https://github.com/owasp-amass/amass/releases/download/v4.2.0/amass_linux_amd64.zip && unzip -q amass_linux_amd64.zip && sudo mv amass_linux_amd64/amass /usr/local/bin/ || true
-          wget -q https://github.com/tomnomnom/assetfinder/releases/download/v0.1.1/assetfinder-linux-amd64-0.1.1.tgz && tar -xzf assetfinder-linux-amd64-0.1.1.tgz && sudo mv assetfinder /usr/local/bin/ || true
-          wget -q https://github.com/findomain/findomain/releases/download/9.0.4/findomain-linux.zip && unzip -q findomain-linux.zip && sudo mv findomain /usr/local/bin/ || true
-          wget -q https://github.com/lc/gau/releases/download/v2.2.3/gau_2.2.3_linux_amd64.tar.gz && tar -xzf gau_2.2.3_linux_amd64.tar.gz && sudo mv gau /usr/local/bin/ || true
-          wget -q https://github.com/tomnomnom/waybackurls/releases/download/v0.1.0/waybackurls-linux-amd64-0.1.0.tgz && tar -xzf waybackurls-linux-amd64-0.1.0.tgz && sudo mv waybackurls /usr/local/bin/ || true
-          wget -q https://github.com/hahwul/dalfox/releases/download/v2.9.2/dalfox_2.9.2_linux_amd64.tar.gz && tar -xzf dalfox_2.9.2_linux_amd64.tar.gz && sudo mv dalfox /usr/local/bin/ || true
-          wget -q https://github.com/assetnote/kiterunner/releases/download/v1.0.2/kiterunner_1.0.2_linux_amd64.tar.gz && tar -xzf kiterunner_1.0.2_linux_amd64.tar.gz && sudo mv kr /usr/local/bin/ || true
-          wget -q https://github.com/gitleaks/gitleaks/releases/download/v8.18.2/gitleaks_8.18.2_linux_x64.tar.gz && tar -xzf gitleaks_8.18.2_linux_x64.tar.gz && sudo mv gitleaks /usr/local/bin/ || true
-          wget -q https://github.com/trufflesecurity/trufflehog/releases/download/v3.68.8/trufflehog_3.68.8_linux_amd64.tar.gz && tar -xzf trufflehog_3.68.8_linux_amd64.tar.gz && sudo mv trufflehog /usr/local/bin/ || true
-          wget -q https://github.com/jpillora/chisel/releases/download/v1.9.1/chisel_1.9.1_linux_amd64.gz && gzip -d chisel_1.9.1_linux_amd64.gz && chmod +x chisel_1.9.1_linux_amd64 && sudo mv chisel_1.9.1_linux_amd64 /usr/local/bin/chisel || true
-          wget -q https://github.com/nicocha30/ligolo-ng/releases/download/v0.5.2/ligolo-ng_agent_0.5.2_linux_amd64.tar.gz && tar -xzf ligolo-ng_agent_0.5.2_linux_amd64.tar.gz && sudo mv agent /usr/local/bin/ligolo-agent || true
-          wget -q https://github.com/projectdiscovery/uncover/releases/download/v1.0.7/uncover_1.0.7_linux_amd64.zip && unzip -q uncover_1.0.7_linux_amd64.zip && sudo mv uncover /usr/local/bin/ || true
-          wget -q https://github.com/tomnomnom/httprobe/releases/download/v0.1/httprobe-linux-amd64-0.1.tar.gz && tar -xzf httprobe-linux-amd64-0.1.tar.gz && sudo mv httprobe /usr/local/bin/ || true
-          wget -q https://github.com/tomnomnom/meg/releases/download/v0.3/meg-linux-amd64-0.3.tar.gz && tar -xzf meg-linux-amd64-0.3.tar.gz && sudo mv meg /usr/local/bin/ || true
-          wget -q https://github.com/hakluke/hakrawler/releases/download/v2.1.0/hakrawler_2.1.0_linux_amd64.tar.gz && tar -xzf hakrawler_2.1.0_linux_amd64.tar.gz && sudo mv hakrawler /usr/local/bin/ || true
-          wget -q https://github.com/sensortower/gowitness/releases/download/v2.5.0/gowitness-2.5.0-linux-amd64 && chmod +x gowitness-2.5.0-linux-amd64 && sudo mv gowitness-2.5.0-linux-amd64 /usr/local/bin/gowitness || true
-          wget -q https://github.com/michenriksen/aquatone/releases/download/v1.7.0/aquatone_linux_amd64_1.7.0.zip && unzip -q aquatone_linux_amd64_1.7.0.zip && sudo mv aquatone /usr/local/bin/ || true
-          wget -q https://github.com/gleblanc/subjack/releases/download/v1.0.0/subjack_linux_amd64.tar.gz && tar -xzf subjack_linux_amd64.tar.gz && sudo mv subjack /usr/local/bin/ || true
-          wget -q https://github.com/aboul3la/Sublist3r/archive/refs/tags/1.0.tar.gz && tar -xzf 1.0.tar.gz && sudo ln -s $(pwd)/Sublist3r-1.0/sublist3r.py /usr/local/bin/sublist3r || true
-        continue-on-error: true
-
-      - name: Install Security Tools in Other Languages (Java, .NET, C/C++)
-        run: |
-          sudo apt-get install -y -qq default-jre burpsuite zaproxy || true
-          git clone --quiet https://github.com/frohoff/ysoserial.git /opt/ysoserial || true
-          git clone --quiet https://github.com/RUB-NDS/Marshalsec.git /opt/marshalsec || true
-          git clone --quiet https://github.com/BloodHoundAD/BloodHound.git /opt/BloodHound || true
-          git clone --quiet https://github.com/GhostPack/Rubeus.git /opt/Rubeus || true
-          git clone --quiet https://github.com/GhostPack/Seatbelt.git /opt/Seatbelt || true
-          git clone --quiet https://github.com/GhostPack/SharpUp.git /opt/SharpUp || true
-          git clone --quiet https://github.com/BloodHoundAD/SharpHound.git /opt/SharpHound || true
-        continue-on-error: true
-
-      - name: Install Cloud and Container Security Tools
-        run: |
-          pip install --quiet checkov prowler scoutsuite kube-hunter kube-bench kubeaudit kubesec kubescape popeye kube-linter datree kube-score conftest opa terrascan tfsec tflint cloudmapper pacu cloudsplaining pmapper || true
-          curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin || true
-        continue-on-error: true
-
-      - name: Install Secret Detection Tools
-        run: |
-          pip install --quiet detect-secrets git-secrets whisper shhgit repo-supervisor tartufo semgrep || true
-        continue-on-error: true
-
-      - name: Run Core Advanced Scanner Engine
+      - name: Run scanner
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           SCAN_ID: ${{ inputs.scan_id }}
           TARGET_URL: ${{ inputs.target_url }}
-        run: python backend/github_actions/scanner.py
-        continue-on-error: true
+        run: |
+          python backend/github_actions/scanner.py
+        continue-on-error: false
 
-# العدد الإجمالي التقريبي للأدوات والمكتبات والحزم المُثبّتة في هذا الـ Workflow يتجاوز 250 عنصرًا مستقلًا.
