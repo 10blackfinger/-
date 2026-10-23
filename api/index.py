@@ -1,4 +1,3 @@
-
 import os
 import io
 import re
@@ -187,7 +186,6 @@ async def check_rate_limit(session_id: str):
     except HTTPException:
         raise
     except Exception:
-        # Fail-closed: if we can't verify the limit, refuse the scan
         raise HTTPException(
             status_code=503,
             detail="تعذر التحقق من الحد المسموح، حاول بعد قليل",
@@ -198,12 +196,50 @@ async def check_concurrent_scans(session_id: str):
     if DISABLE_SCAN_LIMITS:
         return
     try:
-        active = await sb_select("scans", {
+        active_scans = await sb_select("scans", {
             "session_id": f"eq.{session_id}",
             "status": "in.(pending,running)",
-            "select": "id",
+            "select": "id,status,created_at",
         })
-        if active:
+
+        if not active_scans:
+            return
+
+        now = datetime.utcnow()
+        truly_active = []
+
+        for scan in active_scans:
+            scan_id = scan.get("id", "")
+            status = scan.get("status", "")
+            created_at_str = scan.get("created_at", "")
+
+            age_minutes = 0.0
+            try:
+                if created_at_str.endswith("Z"):
+                    created_at_str = created_at_str[:-1] + "+00:00"
+                scan_time = datetime.fromisoformat(created_at_str)
+                if scan_time.tzinfo:
+                    age_minutes = (datetime.now(scan_time.tzinfo) - scan_time).total_seconds() / 60
+                else:
+                    age_minutes = (now - scan_time).total_seconds() / 60
+            except Exception:
+                age_minutes = 0.0
+
+            threshold = 5 if status == "pending" else 185
+
+            if age_minutes < threshold:
+                truly_active.append(scan)
+            else:
+                try:
+                    await sb_update("scans", {"id": scan_id}, {
+                        "status": "failed",
+                        "error_message": f"Auto-cleaned: stuck in '{status}' for {int(age_minutes)} min",
+                        "completed_at": now.isoformat(),
+                    })
+                except Exception:
+                    pass
+
+        if truly_active:
             raise HTTPException(
                 status_code=429,
                 detail="لديك فحص قيد التنفيذ بالفعل - انتظر انتهاءه قبل بدء فحص جديد",
@@ -211,7 +247,6 @@ async def check_concurrent_scans(session_id: str):
     except HTTPException:
         raise
     except Exception:
-        # Fail-open: not a security boundary, DB will reject insert anyway
         pass
 
 
@@ -304,7 +339,7 @@ async def create_scan(request: ScanRequest):
             detail="GITHUB_TOKEN غير مُعرّف في إعدادات السيرفر - تواصل مع المسؤول",
         )
 
-    if not github_repo or "/" not in github_repo or github_repo.endswith("/-") or github_repo == "10blackfinger/-":
+    if not github_repo or "/" not in github_repo or len(github_repo.split("/")) != 2:
         try:
             await sb_update("scans", {"id": scan_id}, {
                 "status": "failed",
@@ -388,7 +423,6 @@ async def get_scan_status(
 
 @app.get("/api/scan/{scan_id}/status")
 async def get_scan_live_status(scan_id: str):
-    """Public metadata endpoint (no PII, no evidence) — used by frontend polling."""
     try:
         scans = await sb_select("scans", {
             "id": f"eq.{scan_id}",
@@ -414,7 +448,6 @@ async def get_scan_results(
     try:
         session_id = validate_session_id(session_id)
 
-        # Verify scan ownership
         scan_check = await sb_select("scans", {
             "id": f"eq.{scan_id}",
             "session_id": f"eq.{session_id}",
@@ -1486,4 +1519,3 @@ async def download_report_pdf(scan_id: str, session_id: str = Query(...)):
         media_type="application/pdf",
         headers=secure_report_headers(scan_id, "pdf", attachment=True),
     )
-
